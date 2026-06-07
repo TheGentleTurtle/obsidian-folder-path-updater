@@ -544,9 +544,8 @@ class PathTrackerPlugin extends Plugin {
     title.style.cssText = 'font-weight:600;margin-bottom:2px;';
     title.setText(`Folder Path Updater: ${summaryLine}`);
     n.noticeEl.createDiv({ text: `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}${summary.failed ? ` (${summary.failed} failed)` : ''}.` });
-    // View button — matches notify-mode notice
-    const btns = n.noticeEl.createDiv();
-    btns.style.cssText = 'margin-top:8px;display:flex;gap:6px;';
+    // Buttons row: View (+ Reload Obsidian if a community plugin needs reload)
+    const btns = n.noticeEl.createDiv({ cls: 'fpu-notice-btns' });
     const view = btns.createEl('button', { text: 'View' });
     view.onclick = () => {
       n.hide();
@@ -559,7 +558,8 @@ class PathTrackerPlugin extends Plugin {
       this.app.setting.openTabById('folder-path-updater');
     };
     if (needsReload) {
-      this.appendReloadFooter(n.noticeEl, () => n.hide());
+      const reload = btns.createEl('button', { text: 'Reload Obsidian', cls: 'mod-cta' });
+      reload.onclick = () => { n.hide(); this.triggerReload(); };
     }
   }
 

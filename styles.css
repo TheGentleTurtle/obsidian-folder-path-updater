@@ -259,7 +259,19 @@
   padding: 6px 16px;
 }
 
-/* ========== Reload footer (used in Notices + modal success state) ========== */
+/* ========== Notice buttons (View + Reload, side by side) ========== */
+.fpu-notice-btns {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.fpu-notice-btns button {
+  font-size: 0.85em;
+  padding: 4px 14px;
+}
+
+/* ========== Reload footer (used in modal success state) ========== */
 .fpu-reload-line {
   margin-top: 6px;
   font-size: 0.88em;
@@ -270,8 +282,6 @@
   display: flex;
   justify-content: flex-end;
 }
-.fpu-notice .fpu-reload-btn-row,
-.fpu-notice .fpu-reload-line { margin-top: 6px; }
 button.fpu-reload-btn {
   font-size: 0.85em;
   padding: 4px 14px;

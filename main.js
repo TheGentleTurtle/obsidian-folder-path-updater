@@ -543,7 +543,19 @@ class PathTrackerPlugin extends Plugin {
     const title = n.noticeEl.createDiv();
     title.style.cssText = 'font-weight:600;margin-bottom:2px;';
     title.setText(`Folder Path Updater: ${summaryLine}`);
-    n.noticeEl.createDiv({ text: `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}${summary.failed ? ` (${summary.failed} failed)` : ''}.` });
+    let subText;
+    if (needsReload) {
+      const plugins = Array.from(summary.pluginsNeedingReload);
+      let list;
+      if (plugins.length === 1) list = plugins[0];
+      else if (plugins.length === 2) list = `${plugins[0]} and ${plugins[1]}`;
+      else list = `${plugins.slice(0, 2).join(', ')}, and ${plugins.length - 2} other${plugins.length - 2 === 1 ? '' : 's'}`;
+      const verb = plugins.length === 1 ? 'uses' : 'use';
+      subText = `${list} still ${verb} the old path until you reload.`;
+    } else {
+      subText = `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}${summary.failed ? ` (${summary.failed} failed)` : ''}.`;
+    }
+    n.noticeEl.createDiv({ text: subText });
     // Buttons row: View (+ Reload Obsidian if a community plugin needs reload)
     const btns = n.noticeEl.createDiv({ cls: 'fpu-notice-btns' });
     const view = btns.createEl('button', { text: 'View' });

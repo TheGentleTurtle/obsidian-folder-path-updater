@@ -39,6 +39,7 @@ class PathTrackerPlugin extends Plugin {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     this.session = [];          // all entries this session (applied/skipped/pending/reverted)
     this.pending = [];          // entries with status==='pending'
+    this.pluginsNeedingReload = new Set(); // populated only when auto-reload is OFF
     this.entryIdCounter = 0;
     this.settingTab = new PathTrackerSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -209,7 +210,8 @@ class PathTrackerPlugin extends Plugin {
     if (this.settings.mode === 'auto') {
       // Apply automatically AND show a notice with what was changed
       const summary = await this.applyProposals(proposals);
-      this.notifySummary(summaryLine, summary);
+      const groupKeys = new Set(batch.map((b) => `${b.oldPath}→${b.newPath}`));
+      this.notifySummary(summaryLine, summary, groupKeys);
     } else if (this.settings.mode === 'notify') {
       // No action — just log everything as skipped and show a View notice
       const groupKeys = new Set();
@@ -268,7 +270,8 @@ class PathTrackerPlugin extends Plugin {
       apply.onclick = async () => {
         n.hide();
         const summary = await this.applyProposals(proposals);
-        this.notifySummary(summaryLine, summary);
+        const groupKeys = new Set(proposals.map((p) => `${p.oldPath}→${p.newPath}`));
+        this.notifySummary(summaryLine, summary, groupKeys);
       };
       this.settingTab.refreshIfOpen();
     }
@@ -368,7 +371,7 @@ class PathTrackerPlugin extends Plugin {
       if (!byFile.has(p.sourceFile)) byFile.set(p.sourceFile, []);
       byFile.get(p.sourceFile).push(p);
     }
-    const summary = { applied: 0, failed: 0, scopes: new Set() };
+    const summary = { applied: 0, failed: 0, scopes: new Set(), pluginsNeedingReload: new Set() };
     const adapter = this.app.vault.adapter;
 
     for (const [file, props] of byFile) {
@@ -418,6 +421,12 @@ class PathTrackerPlugin extends Plugin {
           this.pending = this.pending.filter((q) => q.id !== p.id);
           summary.applied++;
           summary.scopes.add(this.friendlyLabel(p));
+        }
+        // When auto-reload is OFF, surface the manual reload button system.
+        if (isPluginFile && pluginId !== 'folder-path-updater' && !this.settings.reloadPluginsAfterUpdate) {
+          const label = this.friendlyLabel(ok[0]);
+          summary.pluginsNeedingReload.add(label);
+          this.pluginsNeedingReload.add(label);
         }
       } catch (e) {
         for (const p of ok) { p.status = 'failed'; p.error = `write failed: ${e.message}`; summary.failed++; }
@@ -526,18 +535,60 @@ class PathTrackerPlugin extends Plugin {
     cur[keyPath[keyPath.length - 1]] = value;
   }
 
-  notifySummary(summaryLine, summary) {
-    const n = new Notice('', 8000);
+  notifySummary(summaryLine, summary, groupKeys) {
+    const needsReload = summary.pluginsNeedingReload && summary.pluginsNeedingReload.size > 0;
+    const n = new Notice('', needsReload ? 15000 : 10000);
     n.noticeEl.empty();
     n.noticeEl.addClass('fpu-notice');
     const title = n.noticeEl.createDiv();
     title.style.cssText = 'font-weight:600;margin-bottom:2px;';
     title.setText(`Folder Path Updater: ${summaryLine}`);
     n.noticeEl.createDiv({ text: `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}${summary.failed ? ` (${summary.failed} failed)` : ''}.` });
+    // View button — matches notify-mode notice
+    const btns = n.noticeEl.createDiv();
+    btns.style.cssText = 'margin-top:8px;display:flex;gap:6px;';
+    const view = btns.createEl('button', { text: 'View' });
+    view.onclick = () => {
+      n.hide();
+      const tab = this.settingTab;
+      if (tab && groupKeys) {
+        if (!tab.expandedGroups) tab.expandedGroups = new Set();
+        for (const k of groupKeys) tab.expandedGroups.add(k);
+      }
+      this.app.setting.open();
+      this.app.setting.openTabById('folder-path-updater');
+    };
+    if (needsReload) {
+      this.appendReloadFooter(n.noticeEl, () => n.hide());
+    }
   }
 
   openPendingModal() {
     new PendingModal(this.app, this).open();
+  }
+
+  // User-initiated reload of the Obsidian window. Invoked only from explicit
+  // button clicks — this is the path used when auto-reload is turned off.
+  triggerReload() {
+    try {
+      if (this.app.commands && this.app.commands.executeCommandById) {
+        if (this.app.commands.executeCommandById('app:reload')) return;
+      }
+    } catch (e) { /* fall through */ }
+    window.location.reload();
+  }
+
+  // Build the standard reload footer used in the auto-apply Notice and modal
+  // success state. parent is a DOM element; footer = static line + button.
+  appendReloadFooter(parent, onClicked) {
+    parent.createDiv({ cls: 'fpu-reload-line', text: 'Reload Obsidian for the changes to take effect.' });
+    const btnRow = parent.createDiv({ cls: 'fpu-reload-btn-row' });
+    const btn = btnRow.createEl('button', { cls: 'fpu-reload-btn mod-cta', text: 'Reload Obsidian' });
+    btn.onclick = () => {
+      if (onClicked) onClicked();
+      this.triggerReload();
+    };
+    return btn;
   }
 
   // Manual rewrite: user types an old path and a new path; we scan and queue
@@ -773,9 +824,28 @@ class PendingModal extends Modal {
   }
   onClose() { this.contentEl.empty(); }
 
+  renderAppliedSuccess(summary) {
+    const { contentEl, plugin } = this;
+    const card = contentEl.createDiv({ cls: 'fpu-modal-success' });
+    const head = card.createDiv({ cls: 'fpu-modal-success-head' });
+    head.setText(`Applied ${summary.applied} change${summary.applied === 1 ? '' : 's'}`);
+    plugin.appendReloadFooter(card, () => this.close());
+    const closeRow = contentEl.createDiv({ cls: 'fpu-modal-success-close' });
+    const closeBtn = closeRow.createEl('button', { text: 'Close' });
+    closeBtn.onclick = () => { this.lastAppliedSummary = null; this.close(); };
+  }
+
   render() {
     const { contentEl, plugin } = this;
     contentEl.empty();
+    // After a successful apply that needs a reload (auto-reload off), show the
+    // success-with-reload state instead of the normal pending view.
+    if (this.lastAppliedSummary && this.lastAppliedSummary.applied > 0 &&
+        this.lastAppliedSummary.pluginsNeedingReload &&
+        this.lastAppliedSummary.pluginsNeedingReload.size > 0) {
+      this.renderAppliedSuccess(this.lastAppliedSummary);
+      return;
+    }
     const pending = plugin.pending.slice();
     if (pending.length === 0) {
       contentEl.createDiv({ cls: 'path-tracker-empty', text: 'No path updates waiting.' });
@@ -803,7 +873,8 @@ class PendingModal extends Modal {
     const bar = contentEl.createDiv({ cls: 'path-tracker-toolbar primary' });
     const applyAll = bar.createEl('button', { text: 'Apply all', cls: 'mod-cta' });
     applyAll.onclick = async () => {
-      await plugin.applyProposals(pending.slice());
+      const summary = await plugin.applyProposals(pending.slice());
+      this.lastAppliedSummary = summary;
       this.selected.clear();
       this.render();
     };
@@ -833,7 +904,8 @@ class PendingModal extends Modal {
       applySel.disabled = this.selected.size === 0;
       applySel.onclick = async () => {
         const chosen = pending.filter((p) => this.selected.has(p.id));
-        await plugin.applyProposals(chosen);
+        const summary = await plugin.applyProposals(chosen);
+        this.lastAppliedSummary = summary;
         this.selected.clear();
         this.render();
       };
@@ -951,6 +1023,23 @@ class PathTrackerSettingTab extends PluginSettingTab {
     this.isOpen = true;
     const { containerEl } = this;
     containerEl.empty();
+
+    // ---- Reload banner: only when auto-reload is OFF and a community plugin's
+    // data.json was edited this session and the user hasn't reloaded or dismissed.
+    if (!this.plugin.settings.reloadPluginsAfterUpdate &&
+        this.plugin.pluginsNeedingReload && this.plugin.pluginsNeedingReload.size > 0) {
+      const list = Array.from(this.plugin.pluginsNeedingReload);
+      const count = list.length;
+      const banner = containerEl.createDiv({ cls: 'fpu-reload-banner' });
+      const title = banner.createDiv({ cls: 'fpu-reload-banner-title' });
+      title.setText(`${count} plugin${count === 1 ? '' : 's'} use${count === 1 ? 's' : ''} an old path: ${list.join(', ')}`);
+      banner.createDiv({ cls: 'fpu-reload-banner-sub', text: 'Reload Obsidian for the changes to take effect.' });
+      const btns = banner.createDiv({ cls: 'fpu-reload-banner-btns' });
+      const reload = btns.createEl('button', { text: 'Reload Obsidian', cls: 'mod-cta' });
+      reload.onclick = () => this.plugin.triggerReload();
+      const dismiss = btns.createEl('button', { text: 'Dismiss' });
+      dismiss.onclick = () => { this.plugin.pluginsNeedingReload.clear(); this.display(); };
+    }
 
     containerEl.createEl('p', {
       text: 'Automatically updates folder and file path references across Obsidian’s core settings and community plugin data when you rename or move things.',

@@ -188,10 +188,11 @@ class PathTrackerPlugin extends Plugin {
           : `${batch.length} renames`;
         const n = new Notice('', 8000);
         n.noticeEl.empty();
+        n.noticeEl.addClass('fpu-notice');
         const title = n.noticeEl.createDiv();
         title.style.cssText = 'font-weight:600;margin-bottom:2px;';
         title.setText(`Folder Path Updater: ${summaryLine}`);
-        n.noticeEl.createDiv({ text: 'Already in sync (nothing to change).' });
+        n.noticeEl.createDiv({ text: 'Already in sync — no action needed.' });
         this.settingTab.refreshIfOpen();
       } else if (ALWAYS_ON.notifyOnNoChanges) {
         const labels = batch.map((b) => `"${b.oldPath}"`).slice(0, 2).join(', ');

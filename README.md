@@ -54,7 +54,7 @@ Before every change, a backup is saved in `.obsidian/plugins/folder-path-updater
 
 ### From the Community Plugins directory
 
-Once approved by Obsidian, you'll be able to install it from **Settings → Community plugins → Browse** and search for *Folder Path Updater*.
+Install from **Settings → Community plugins → Browse** and search for *Folder Path Updater*, or view the listing at [community.obsidian.md/plugins/folder-path-updater](https://community.obsidian.md/plugins/folder-path-updater).
 
 ### Manually
 

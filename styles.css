@@ -1,0 +1,282 @@
+/* ========== Caret (animated triangle) ========== */
+.pt-caret {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--text-muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.12s ease;
+  margin-right: 2px;
+}
+.pt-caret.open { transform: rotate(90deg); }
+
+/* ========== Category pills (CORE / PLUGIN / LAYOUT / CONFIG) ========== */
+.pt-pill {
+  display: inline-block;
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.pt-pill.core   { background: var(--color-blue);   color: #ffffff; }
+.pt-pill.plugin { background: var(--color-purple); color: #ffffff; }
+
+/* ========== Status pills (APPLIED / REVERTED / etc.) ========== */
+.pt-status-pill {
+  display: inline-block;
+  font-size: 0.62em;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin-right: 6px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.pt-status-pill.applied  { background: var(--color-green);  color: #ffffff; }
+.pt-status-pill.pending  { background: var(--color-orange); color: #111111; }
+.pt-status-pill.skipped  { background: var(--background-modifier-border); color: var(--text-normal); }
+.pt-status-pill.reverted { background: var(--color-blue);   color: #ffffff; }
+.pt-status-pill.failed   { background: var(--color-red);    color: #ffffff; }
+
+/* ========== Pending modal — summary header ========== */
+.path-tracker-summary {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  background: var(--background-secondary);
+  border-radius: 8px;
+}
+.path-tracker-summary-line {
+  font-weight: 600;
+  font-size: 1em;
+  font-family: var(--font-monospace);
+  word-break: break-all;
+}
+.path-tracker-summary-sub {
+  margin-top: 4px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+/* ========== Toolbars ========== */
+.path-tracker-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.path-tracker-toolbar.primary {
+  margin-bottom: 14px;
+}
+.path-tracker-toolbar.primary button {
+  padding: 6px 18px;
+  font-weight: 500;
+}
+
+/* ========== Pending modal — group card ========== */
+.path-tracker-group-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  transition: border-color 0.12s ease;
+}
+.path-tracker-group-card:hover {
+  border-color: var(--interactive-accent);
+}
+.path-tracker-group-head {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  cursor: pointer;
+  background: var(--background-secondary);
+}
+.path-tracker-group-head:hover { background: var(--background-modifier-hover); }
+.path-tracker-group-head input[type="checkbox"] {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+.path-tracker-group-title { min-width: 0; }
+.path-tracker-group-name {
+  font-weight: 600;
+  font-size: 0.95em;
+  word-break: break-all;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.path-tracker-group-sub {
+  font-size: 0.82em;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.path-tracker-group-body {
+  padding: 10px 16px 14px 40px;
+  background: var(--background-primary-alt);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ========== Single change line ========== */
+.path-tracker-line {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--background-modifier-border);
+}
+.path-tracker-line:last-child { border-bottom: none; }
+.path-tracker-line-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.path-tracker-line-what {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.path-tracker-line-btn {
+  font-size: 0.72em !important;
+  padding: 2px 10px !important;
+  margin-left: auto;
+}
+.path-tracker-line-diff {
+  font-family: var(--font-monospace);
+  font-size: 0.82em;
+  word-break: break-all;
+  padding-left: 0;
+}
+.path-tracker-line-diff .pt-d-eq  { color: var(--text-normal); }
+.path-tracker-line-diff .pt-d-del { color: var(--text-error); text-decoration: line-through; background: rgba(255,80,80,0.15); padding: 0 2px; border-radius: 2px; }
+.path-tracker-line-diff .pt-d-add { color: var(--text-success); background: rgba(80,200,120,0.15); padding: 0 2px; border-radius: 2px; font-weight: 600; }
+
+/* ========== Settings history ========== */
+.path-tracker-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 28px;
+  margin-bottom: 10px;
+}
+.path-tracker-history-head h3 { margin: 0; }
+.path-tracker-history-head-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.path-tracker-history-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.path-tracker-history-summary {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  cursor: pointer;
+  background: var(--background-secondary);
+}
+.path-tracker-history-summary:hover { background: var(--background-modifier-hover); }
+.path-tracker-history-title { min-width: 0; }
+.path-tracker-history-rename {
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  font-weight: 600;
+  word-break: break-all;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.path-tracker-history-ts {
+  font-family: var(--font-interface);
+  font-size: 0.72em;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.path-tracker-line-ts {
+  font-size: 0.72em;
+  color: var(--text-muted);
+}
+.path-tracker-history-status {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.path-tracker-history-tail {
+  font-size: 0.78em;
+  color: var(--text-muted);
+}
+.path-tracker-history-actions { display: flex; gap: 6px; }
+.path-tracker-history-actions button { font-size: 0.82em; padding: 4px 14px; }
+.path-tracker-history-body {
+  padding: 12px 16px 14px;
+  background: var(--background-primary-alt);
+  border-top: 1px solid var(--background-modifier-border);
+}
+.path-tracker-history-block + .path-tracker-history-block { margin-top: 14px; }
+.path-tracker-history-block-head {
+  font-size: 0.85em;
+  font-weight: 600;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ========== Danger zone ========== */
+.path-tracker-danger-zone {
+  margin-top: 24px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-red);
+  border-radius: 8px;
+  background: rgba(220, 60, 60, 0.05);
+}
+.path-tracker-danger-zone h4 {
+  margin: 0 0 8px;
+  color: var(--color-red);
+  font-size: 0.95em;
+}
+.path-tracker-danger-desc {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.path-tracker-danger-btn {
+  background: var(--color-red) !important;
+  color: var(--text-on-accent) !important;
+  padding: 6px 16px !important;
+}
+
+/* ========== Misc ========== */
+.path-tracker-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* Legacy status badge (used by some older code paths) */
+.path-tracker-status {
+  display: inline-block;
+  font-size: 0.62em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.path-tracker-status.applied  { background: var(--color-green);  color: #ffffff; }
+.path-tracker-status.pending  { background: var(--color-orange); color: #111111; }
+.path-tracker-status.skipped  { background: var(--background-modifier-border); color: var(--text-normal); }
+.path-tracker-status.reverted { background: var(--color-blue);   color: #ffffff; }
+.path-tracker-status.failed   { background: var(--color-red);    color: #ffffff; }

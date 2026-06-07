@@ -5,7 +5,6 @@ const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFolder, TFile, normal
 
 const DEFAULT_SETTINGS = {
   mode: 'manual',                  // 'auto' | 'manual' | 'notify'
-  reloadPluginsAfterUpdate: true,  // disable/enable plugin so it picks up the new path
   ignorePaths: [],
 };
 
@@ -367,7 +366,7 @@ class PathTrackerPlugin extends Plugin {
       if (!byFile.has(p.sourceFile)) byFile.set(p.sourceFile, []);
       byFile.get(p.sourceFile).push(p);
     }
-    const summary = { applied: 0, failed: 0, scopes: new Set() };
+    const summary = { applied: 0, failed: 0, scopes: new Set(), pluginsNeedingReload: new Set() };
     const adapter = this.app.vault.adapter;
 
     for (const [file, props] of byFile) {
@@ -398,18 +397,6 @@ class PathTrackerPlugin extends Plugin {
         catch (e) { console.warn('[Folder Path Updater] backup failed', e); }
       }
 
-      const scope = ok[0].scope || '';
-      const isPluginFile = scope.startsWith('plugin:');
-      const pluginId = isPluginFile ? scope.slice('plugin:'.length) : null;
-      const reloadPlugin = this.settings.reloadPluginsAfterUpdate && isPluginFile && pluginId !== 'folder-path-updater';
-      const wasEnabled = reloadPlugin && this.app.plugins?.enabledPlugins?.has(pluginId);
-
-      // Disable BEFORE writing so the plugin's onunload doesn't overwrite our change
-      if (wasEnabled) {
-        try { await this.app.plugins.disablePlugin(pluginId); }
-        catch (e) { console.warn('[Folder Path Updater] disable failed', e); }
-      }
-
       try {
         await adapter.write(file, JSON.stringify(data, null, 2));
         for (const p of ok) {
@@ -418,13 +405,18 @@ class PathTrackerPlugin extends Plugin {
           summary.applied++;
           summary.scopes.add(this.friendlyLabel(p));
         }
+        // If we updated a community plugin's data.json, the plugin's in-memory
+        // state is still using the old path. Track which plugins to nudge the
+        // user about after the batch finishes.
+        const scope = ok[0].scope || '';
+        if (scope.startsWith('plugin:')) {
+          const pluginId = scope.slice('plugin:'.length);
+          if (pluginId !== 'folder-path-updater') {
+            summary.pluginsNeedingReload.add(this.friendlyLabel(ok[0]));
+          }
+        }
       } catch (e) {
         for (const p of ok) { p.status = 'failed'; p.error = `write failed: ${e.message}`; summary.failed++; }
-      } finally {
-        if (wasEnabled) {
-          try { await this.app.plugins.enablePlugin(pluginId); }
-          catch (e) { console.warn('[Folder Path Updater] re-enable failed', e); }
-        }
       }
     }
 
@@ -526,12 +518,19 @@ class PathTrackerPlugin extends Plugin {
   }
 
   notifySummary(summaryLine, summary) {
-    const n = new Notice('', 8000);
+    const n = new Notice('', 10000);
     n.noticeEl.empty();
     const title = n.noticeEl.createDiv();
     title.style.cssText = 'font-weight:600;margin-bottom:2px;';
     title.setText(`Folder Path Updater: ${summaryLine}`);
     n.noticeEl.createDiv({ text: `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}${summary.failed ? ` (${summary.failed} failed)` : ''}.` });
+    if (summary.pluginsNeedingReload && summary.pluginsNeedingReload.size > 0) {
+      const plugins = Array.from(summary.pluginsNeedingReload);
+      const list = plugins.length === 1 ? plugins[0] : `${plugins.slice(0, -1).join(', ')} and ${plugins.slice(-1)}`;
+      const hint = n.noticeEl.createDiv();
+      hint.style.cssText = 'margin-top:4px;opacity:0.85;';
+      hint.setText(`Restart Obsidian or toggle ${list} off and back on for the change to take effect.`);
+    }
   }
 
   openPendingModal() {
@@ -964,11 +963,6 @@ class PathTrackerSettingTab extends PluginSettingTab {
         .addOption('notify', 'Notify (no action taken)')
         .setValue(this.plugin.settings.mode)
         .onChange(async (v) => { this.plugin.settings.mode = v; await this.plugin.saveSettings(); }));
-
-    new Setting(containerEl)
-      .setName('Reload affected community plugins')
-      .setDesc('After editing a plugin\'s data.json, disable then re-enable it so the new path takes effect without restarting Obsidian.')
-      .addToggle((t) => t.setValue(this.plugin.settings.reloadPluginsAfterUpdate).onChange(async (v) => { this.plugin.settings.reloadPluginsAfterUpdate = v; await this.plugin.saveSettings(); }));
 
     new Setting(containerEl)
       .setName('Ignore paths (one per line)')

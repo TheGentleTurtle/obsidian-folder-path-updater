@@ -28,9 +28,9 @@ Set in the plugin's settings page:
   <img src="assets/settings.png" alt="Folder Path Updater settings: mode dropdown, Ignore paths textarea, History with one Undo entry, and a red Revert everything danger zone" width="820" style="border-radius: 24px;">
 </p>
 
-The settings tab houses three things: how the plugin should behave (mode + an ignore list), a **History** of every rename it has touched this session with one-click **Undo** per group, and a **Revert everything**  button at the bottom for when you want to roll back the whole session in one shot.
+The settings tab houses these things: how the plugin should behave (mode + an auto-reload toggle + an ignore list), a **History** of every rename it has touched this session with one-click **Undo** per group, and a **Revert everything** button at the bottom for when you want to roll back the whole session in one shot.
 
-> After Folder Path Updater edits a community plugin's `data.json`, the plugin's in-memory state still has the old path. Restart Obsidian or toggle that plugin off and on under **Settings → Community plugins** for the new path to take effect immediately. The notification after a rename names which plugins need this.
+> **Reload affected community plugins** (on by default) makes the plugin disable then re-enable any community plugin whose `data.json` was just edited, so the new path takes effect without restarting Obsidian. Turn it off if you'd rather restart Obsidian yourself.
 
 ## Safety
 

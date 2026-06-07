@@ -144,9 +144,9 @@
   color: var(--text-muted);
   font-weight: 500;
 }
-.path-tracker-line-btn {
-  font-size: 0.72em !important;
-  padding: 2px 10px !important;
+.path-tracker-line .path-tracker-line-btn {
+  font-size: 0.72em;
+  padding: 2px 10px;
   margin-left: auto;
 }
 .path-tracker-line-diff {
@@ -253,10 +253,10 @@
   color: var(--text-muted);
   margin-bottom: 10px;
 }
-.path-tracker-danger-btn {
-  background: var(--color-red) !important;
-  color: var(--text-on-accent) !important;
-  padding: 6px 16px !important;
+.path-tracker-danger-zone button.path-tracker-danger-btn {
+  background: var(--color-red);
+  color: var(--text-on-accent);
+  padding: 6px 16px;
 }
 
 /* ========== Misc ========== */

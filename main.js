@@ -6,6 +6,7 @@ const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFolder, TFile, normal
 const DEFAULT_SETTINGS = {
   mode: 'manual',                  // 'auto' | 'manual' | 'notify'
   reloadPluginsAfterUpdate: true,  // disable/enable plugin so it picks up the new path
+  notifyOnNoChanges: true,         // show a brief Notice on renames where nothing references the path
   ignorePaths: [],
 };
 
@@ -14,7 +15,6 @@ const ALWAYS_ON = {
   scanCore: true,
   scanPluginData: true,
   backupBeforeWrite: true,
-  notifyOnNoChanges: false,
 };
 
 // Only the core configs that hold user-visible file/folder paths.
@@ -195,10 +195,17 @@ class PathTrackerPlugin extends Plugin {
         title.setText(`Folder Path Updater: ${summaryLine}`);
         n.noticeEl.createDiv({ text: 'Already in sync — no action needed.' });
         this.settingTab.refreshIfOpen();
-      } else if (ALWAYS_ON.notifyOnNoChanges) {
-        const labels = batch.map((b) => `"${b.oldPath}"`).slice(0, 2).join(', ');
-        const extra = batch.length > 2 ? ` (+${batch.length - 2} more)` : '';
-        new Notice(`Folder Path Updater: no settings references found for ${labels}${extra}`);
+      } else if (this.settings.notifyOnNoChanges) {
+        const summaryLine = batch.length === 1
+          ? `"${batch[0].oldPath}" → "${batch[0].newPath}"`
+          : `${batch.length} renames`;
+        const n = new Notice('', 5000);
+        n.noticeEl.empty();
+        n.noticeEl.addClass('fpu-notice');
+        const title = n.noticeEl.createDiv();
+        title.style.cssText = 'font-weight:600;margin-bottom:2px;';
+        title.setText(`Folder Path Updater: ${summaryLine}`);
+        n.noticeEl.createDiv({ text: '0 references to update.' });
       }
       return;
     }
@@ -1072,6 +1079,11 @@ class PathTrackerSettingTab extends PluginSettingTab {
       .setName('Reload affected community plugins')
       .setDesc('After editing a plugin\'s data.json, disable then re-enable it so the new path takes effect without restarting Obsidian.')
       .addToggle((t) => t.setValue(this.plugin.settings.reloadPluginsAfterUpdate).onChange(async (v) => { this.plugin.settings.reloadPluginsAfterUpdate = v; await this.plugin.saveSettings(); }));
+
+    new Setting(containerEl)
+      .setName('Notify on every rename')
+      .setDesc('Show a brief notice even when nothing references the renamed folder, so you know the plugin ran. Turn off if it becomes noisy during large reorganizations.')
+      .addToggle((t) => t.setValue(this.plugin.settings.notifyOnNoChanges).onChange(async (v) => { this.plugin.settings.notifyOnNoChanges = v; await this.plugin.saveSettings(); }));
 
     new Setting(containerEl)
       .setName('Ignore paths (one per line)')

@@ -1,40 +1,40 @@
-name: Build release zip
+name: Attest release assets
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to attest (e.g. 0.1.5)'
+        required: true
 
 permissions:
-  contents: write
+  contents: read
+  id-token: write
+  attestations: write
 
 jobs:
-  build:
+  attest:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "ref=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ steps.tag.outputs.ref }}
 
-      - name: Read plugin id from manifest
-        id: meta
-        run: |
-          id=$(node -p "require('./manifest.json').id")
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-
-      - name: Build install zip
-        run: |
-          rm -rf staging
-          mkdir -p "staging/${{ steps.meta.outputs.id }}"
-          cp main.js manifest.json staging/${{ steps.meta.outputs.id }}/
-          if [ -f styles.css ]; then cp styles.css staging/${{ steps.meta.outputs.id }}/; fi
-          (cd staging && zip -r "../${{ steps.meta.outputs.id }}.zip" "${{ steps.meta.outputs.id }}/")
-          ls -la "${{ steps.meta.outputs.id }}.zip"
-
-      - name: Upload zip to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
-            "${{ steps.meta.outputs.id }}.zip" \
-            --repo "${{ github.repository }}" \
-            --clobber
+      - name: Generate build provenance attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css

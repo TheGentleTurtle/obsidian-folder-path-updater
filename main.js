@@ -90,7 +90,9 @@ class PathTrackerPlugin extends Plugin {
 
     this.renameBatch = [];
     this.renameBatchTimer = null;
+    this.suppressRenameEvents = false;
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+      if (this.suppressRenameEvents) return; // we triggered this rename ourselves (undo/reapply)
       if (!oldPath || !file || oldPath === file.path) return;
       this.renameBatch.push({ file, oldPath, newPath: file.path, isFolder: file instanceof TFolder });
       if (this.renameBatchTimer) window.clearTimeout(this.renameBatchTimer);
@@ -495,6 +497,33 @@ class PathTrackerPlugin extends Plugin {
   }
 
   // Inverse of undo: re-write the new value (used to re-apply a reverted entry)
+  // Rename a vault path back, but only if it still lives at `from`. No-op if
+  // someone else (an earlier undo in the same batch) already moved it, or if
+  // the target name is occupied.
+  async maybeRenameVaultPath(from, to) {
+    if (!from || !to || from === to) return { skipped: true };
+    const file = this.app.vault.getAbstractFileByPath(from);
+    if (!file) return { skipped: true }; // already moved by earlier action, or never existed
+    const collision = this.app.vault.getAbstractFileByPath(to);
+    if (collision) {
+      this.fpuNotice({ status: `Cannot restore '${to}' (path already exists)`, timeout: 12000 });
+      return { skipped: true, collision: true };
+    }
+    this.suppressRenameEvents = true;
+    try {
+      await this.app.fileManager.renameFile(file, to);
+    } catch (e) {
+      console.warn('[Folder Path Updater] rename-back failed:', e);
+      this.suppressRenameEvents = false;
+      return { skipped: true, error: e.message };
+    }
+    // Clear the suppression flag on the next tick so any deferred rename
+    // event has a chance to fire while it's still set.
+    await new Promise((r) => setTimeout(r, 50));
+    this.suppressRenameEvents = false;
+    return { renamed: true };
+  }
+
   async reapplyEntry(entry, opts) {
     opts = opts || {};
     if (entry.status !== 'reverted') {
@@ -508,6 +537,8 @@ class PathTrackerPlugin extends Plugin {
       this.setByKeyPath(data, entry.keyPath, entry.newValue);
       await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
       entry.status = 'applied';
+      // Also rename the folder/file forward (once per group; subsequent calls no-op)
+      await this.maybeRenameVaultPath(entry.oldPath, entry.newPath);
       this.settingTab.refreshIfOpen();
       if (!opts.silent) this.fpuNotice({
         status: 'Re-applied',
@@ -531,6 +562,8 @@ class PathTrackerPlugin extends Plugin {
       this.setByKeyPath(data, entry.keyPath, entry.oldValue);
       await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
       entry.status = 'reverted';
+      // Also rename the folder/file back (once per group; subsequent calls no-op)
+      await this.maybeRenameVaultPath(entry.newPath, entry.oldPath);
       this.settingTab.refreshIfOpen();
       if (!opts.silent) this.fpuNotice({
         status: 'Reverted',

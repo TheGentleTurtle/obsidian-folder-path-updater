@@ -92,11 +92,22 @@ function formatPathPair(oldPath, newPath) {
 
 class PathTrackerPlugin extends Plugin {
   async onload() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    this.session = [];          // all entries this session (applied/skipped/pending/reverted)
-    this.pending = [];          // entries with status==='pending'
+    const data = (await this.loadData()) || {};
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    delete this.settings._history; // never let persisted history leak into settings
+    this.currentSessionId = Date.now();
+    // Load past-session entries from disk. Anything still 'pending' at last
+    // reload becomes 'skipped' (the user reloaded without acting on it).
+    const persisted = Array.isArray(data._history) ? data._history : [];
+    this.session = persisted.map((e) => {
+      if (e.status === 'pending') {
+        return { ...e, status: 'skipped', note: 'pending at last reload' };
+      }
+      return e;
+    });
+    this.pending = []; // pending entries don't survive a reload
     this.pluginsNeedingReload = new Set(); // populated only when auto-reload is OFF
-    this.entryIdCounter = 0;
+    this.entryIdCounter = this.session.reduce((m, e) => Math.max(m, e.id || 0), 0);
     this.settingTab = new PathTrackerSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
 
@@ -164,7 +175,34 @@ class PathTrackerPlugin extends Plugin {
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
+    const out = Object.assign({}, this.settings);
+    out._history = this.serializeHistory();
+    await this.saveData(out);
+  }
+
+  // Strip non-persistable fields, prune by age, cap at 1000 most recent.
+  serializeHistory() {
+    const cutoff = Date.now() - 30 * 86400000; // 30 days
+    const kept = [];
+    for (const e of this.session) {
+      if ((e.ts || 0) < cutoff) continue;
+      const { originalFileContent, ...rest } = e;
+      // Ensure every entry carries its sessionId so reloads can split them
+      rest.sessionId = rest.sessionId || this.currentSessionId;
+      kept.push(rest);
+    }
+    // Cap to 1000 newest entries
+    kept.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    return kept.slice(-1000);
+  }
+
+  // Debounced history persistence — call after any session mutation
+  markHistoryDirty() {
+    if (this._historySaveTimer) window.clearTimeout(this._historySaveTimer);
+    this._historySaveTimer = window.setTimeout(() => {
+      this._historySaveTimer = null;
+      this.saveSettings().catch((e) => console.warn('[Folder Path Updater] history save failed:', e));
+    }, 800);
   }
 
   updateRibbon() { /* ribbon removed — kept as a no-op so existing call sites are harmless */ }
@@ -284,6 +322,7 @@ class PathTrackerPlugin extends Plugin {
             matchKind: m.kind,
             status: 'pending',
             originalFileContent: null,
+            sessionId: this.currentSessionId,
           });
         }
       }
@@ -357,6 +396,7 @@ class PathTrackerPlugin extends Plugin {
       });
       this.settingTab.refreshIfOpen();
     }
+    this.markHistoryDirty();
   }
 
   // ---------------------------------------------------------------------------
@@ -521,10 +561,12 @@ class PathTrackerPlugin extends Plugin {
     }
 
     for (const p of proposals) {
+      p.sessionId = p.sessionId || this.currentSessionId;
       if (!this.session.includes(p)) this.session.push(p);
     }
     this.updateRibbon();
     this.settingTab.refreshIfOpen();
+    this.markHistoryDirty();
     return summary;
   }
 
@@ -632,6 +674,7 @@ class PathTrackerPlugin extends Plugin {
       // Also rename the folder/file forward (once per group; subsequent calls no-op)
       await this.maybeRenameVaultPath(entry.oldPath, entry.newPath);
       this.settingTab.refreshIfOpen();
+      this.markHistoryDirty();
       if (!opts.silent) this.fpuNotice({
         status: 'Re-applied',
         paths: [{ oldPath: entry.oldPath, newPath: entry.newPath }],
@@ -657,6 +700,7 @@ class PathTrackerPlugin extends Plugin {
       // Also rename the folder/file back (once per group; subsequent calls no-op)
       await this.maybeRenameVaultPath(entry.newPath, entry.oldPath);
       this.settingTab.refreshIfOpen();
+      this.markHistoryDirty();
       if (!opts.silent) this.fpuNotice({
         status: 'Reverted',
         paths: [{ oldPath: entry.newPath, newPath: entry.oldPath }],
@@ -1343,10 +1387,16 @@ class PathTrackerSettingTab extends PluginSettingTab {
     const ignoreHint = ignoreSetting.descEl.createDiv({ cls: 'fpu-setting-hint' });
     ignoreHint.setText('Supports * (one segment) and ** (any depth) wildcards.');
 
-    // ---- History (one row per rename event)
+    // ---- History (current session: full cards; past sessions: collapsed one-liners)
     if (!this.expandedGroups) this.expandedGroups = new Set();
+    if (!this.expandedPastSessions) this.expandedPastSessions = new Set();
 
-    const sorted = this.plugin.session.slice().sort((a, b) => b.ts - a.ts);
+    const sid = this.plugin.currentSessionId;
+    const currentEntries = this.plugin.session.filter((e) => (e.sessionId || sid) === sid);
+    const pastEntries = this.plugin.session.filter((e) => (e.sessionId || sid) !== sid);
+
+    // Group current session by rename pair (existing behavior)
+    const sorted = currentEntries.slice().sort((a, b) => b.ts - a.ts);
     const groups = new Map();
     for (const e of sorted) {
       const key = `${e.oldPath}→${e.newPath}`;
@@ -1362,7 +1412,7 @@ class PathTrackerSettingTab extends PluginSettingTab {
       for (const e of g.entries) if (g.counts[e.status] !== undefined) g.counts[e.status]++;
     }
     const groupList = Array.from(groups.values()).sort((a, b) => b.latestTs - a.latestTs);
-    const totalApplied = this.plugin.session.filter((e) => e.status === 'applied').length;
+    const totalApplied = currentEntries.filter((e) => e.status === 'applied').length;
 
     const head = containerEl.createDiv({ cls: 'path-tracker-history-head' });
     head.createEl('h3', { text: 'History' });
@@ -1373,21 +1423,26 @@ class PathTrackerSettingTab extends PluginSettingTab {
     }
     if (this.plugin.session.length > 0) {
       const clear = headBtns.createEl('button', { text: 'Clear history' });
-      clear.title = 'Removes log entries from the list (does not change anything on disk).';
+      clear.title = 'Drops everything except pending entries. Does not change anything on disk.';
       clear.onclick = () => {
         this.plugin.session = this.plugin.session.filter((e) => e.status === 'pending');
+        this.plugin.markHistoryDirty();
         this.display();
       };
     }
 
-    if (this.plugin.session.length === 0) {
+    if (currentEntries.length === 0 && pastEntries.length === 0) {
       containerEl.createDiv({ cls: 'path-tracker-empty', text: 'No renames tracked yet.' });
       return;
     }
 
-    for (const g of groupList) this.renderHistoryGroup(containerEl, g);
+    if (currentEntries.length === 0) {
+      containerEl.createDiv({ cls: 'path-tracker-empty', text: 'No renames yet this session.' });
+    } else {
+      for (const g of groupList) this.renderHistoryGroup(containerEl, g);
+    }
 
-    // ---- Danger zone
+    // ---- Danger zone (current session only)
     if (totalApplied > 0) {
       const dz = containerEl.createDiv({ cls: 'path-tracker-danger-zone' });
       dz.createEl('h4', { text: 'Revert everything' });
@@ -1400,6 +1455,71 @@ class PathTrackerSettingTab extends PluginSettingTab {
         await this.plugin.revertAllSession();
         this.display();
       };
+    }
+
+    // ---- Past sessions (read-only, collapsible)
+    if (pastEntries.length > 0) this.renderPastSessions(containerEl, pastEntries);
+  }
+
+  renderPastSessions(containerEl, pastEntries) {
+    // Group by sessionId
+    const bySession = new Map();
+    for (const e of pastEntries) {
+      const sid = e.sessionId || 0;
+      if (!bySession.has(sid)) bySession.set(sid, []);
+      bySession.get(sid).push(e);
+    }
+    const sessions = Array.from(bySession.entries()).map(([sid, entries]) => ({
+      sid,
+      entries,
+      latestTs: entries.reduce((m, e) => Math.max(m, e.ts || 0), 0),
+    }));
+    sessions.sort((a, b) => b.latestTs - a.latestTs);
+
+    const divider = containerEl.createDiv({ cls: 'fpu-past-divider' });
+    divider.createSpan({ text: 'Previous sessions' });
+
+    for (const s of sessions) {
+      const card = containerEl.createDiv({ cls: 'fpu-past-session-card' });
+      const isOpen = this.expandedPastSessions.has(s.sid);
+
+      // Group its entries by rename pair to summarize
+      const renames = new Map();
+      for (const e of s.entries) {
+        const key = `${e.oldPath}→${e.newPath}`;
+        if (!renames.has(key)) renames.set(key, { oldPath: e.oldPath, newPath: e.newPath, entries: [], latestTs: e.ts });
+        const r = renames.get(key);
+        r.entries.push(e);
+        if (e.ts > r.latestTs) r.latestTs = e.ts;
+      }
+      const renameList = Array.from(renames.values()).sort((a, b) => b.latestTs - a.latestTs);
+
+      const head = card.createDiv({ cls: 'fpu-past-session-head' });
+      head.createSpan({ cls: `pt-caret ${isOpen ? 'open' : ''}` });
+      const headDate = new Date(s.latestTs).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      head.createSpan({ cls: 'fpu-past-session-date', text: headDate });
+      head.createSpan({ cls: 'fpu-past-session-count', text: `${renameList.length} rename${renameList.length === 1 ? '' : 's'}` });
+      head.onclick = () => {
+        if (this.expandedPastSessions.has(s.sid)) this.expandedPastSessions.delete(s.sid);
+        else this.expandedPastSessions.add(s.sid);
+        this.display();
+      };
+
+      if (isOpen) {
+        const body = card.createDiv({ cls: 'fpu-past-session-body' });
+        for (const r of renameList) {
+          const row = body.createDiv({ cls: 'fpu-past-session-row' });
+          const pathText = row.createSpan({ cls: 'fpu-past-session-path', text: formatPathPair(r.oldPath, r.newPath) });
+          pathText.setAttr('title', `${r.oldPath}\n  →\n${r.newPath}`);
+          const applied = r.entries.filter((e) => e.status === 'applied').length;
+          const total = r.entries.length;
+          const placesText = applied === total
+            ? `${total} place${total === 1 ? '' : 's'}`
+            : `${applied}/${total} place${total === 1 ? '' : 's'}`;
+          const dateText = new Date(r.latestTs).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+          row.createSpan({ cls: 'fpu-past-session-meta', text: ` · ${placesText} · ${dateText}` });
+        }
+      }
     }
   }
 

@@ -35,6 +35,48 @@ const KNOWN_CORE_FILES = Object.keys(CORE_FILE_LABELS);
 // Key names that strongly suggest a path-typed value
 const PATH_KEY_RE = /folder|directory|^dir$|path|template|file|location|attachment/i;
 
+// Convert a glob pattern to a regex that matches the literal path and any
+// descendant. Supports * (single segment), ** (any depth incl. zero), ? (one char),
+// and treats other regex specials as literals.
+function globToRegex(pattern) {
+  if (typeof pattern !== 'string') return null;
+  pattern = pattern.trim().replace(/^\/+|\/+$/g, '');
+  if (!pattern) return null;
+  let r = '';
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === '*' && pattern[i + 1] === '*') {
+      // ** followed by / collapses to zero-or-more directories
+      if (pattern[i + 2] === '/') {
+        r += '(?:[^/]*/)*';
+        i += 3;
+      } else {
+        r += '.*';
+        i += 2;
+      }
+    } else if (c === '*') {
+      r += '[^/]*';
+      i++;
+    } else if (c === '?') {
+      r += '[^/]';
+      i++;
+    } else if ('.+^$()|{}[]\\'.includes(c)) {
+      r += '\\' + c;
+      i++;
+    } else {
+      r += c;
+      i++;
+    }
+  }
+  try {
+    return new RegExp(`^${r}(?:/.*)?$`);
+  } catch (e) {
+    console.warn('[Folder Path Updater] invalid ignore pattern:', pattern, e);
+    return null;
+  }
+}
+
 // Render a rename pair as basenames only when both share the same parent directory,
 // otherwise show the full paths. Caller is responsible for adding a title= tooltip.
 function formatPathPair(oldPath, newPath) {
@@ -131,9 +173,10 @@ class PathTrackerPlugin extends Plugin {
   // Rename batch handler — coalesces all renames in a short window into ONE notification
   // ---------------------------------------------------------------------------
   async handleRenameBatch(rawBatch) {
-    // Filter out ignored paths
+    // Filter out ignored paths (supports * and ** glob wildcards)
+    const ignoreRegexes = this.settings.ignorePaths.map(globToRegex).filter(Boolean);
     let batch = rawBatch.filter((b) =>
-      !this.settings.ignorePaths.some((p) => p === b.oldPath || b.oldPath.startsWith(p + '/'))
+      !ignoreRegexes.some((re) => re.test(b.oldPath))
     );
     if (batch.length === 0) return;
 
@@ -1284,18 +1327,21 @@ class PathTrackerSettingTab extends PluginSettingTab {
         .setValue(String(this.plugin.settings.backupRetentionDays))
         .onChange(async (v) => { this.plugin.settings.backupRetentionDays = parseInt(v, 10) || 0; await this.plugin.saveSettings(); }));
 
-    new Setting(containerEl)
+    const ignoreSetting = new Setting(containerEl)
       .setName('Ignore paths (one per line)')
       .setDesc('Renames of these vault paths (or their children) are skipped entirely.')
       .addTextArea((t) => {
         t.setValue(this.plugin.settings.ignorePaths.join('\n'));
         t.inputEl.rows = 4;
         t.inputEl.style.width = '100%';
+        t.inputEl.setAttr('placeholder', 'Archive\n**/Drafts');
         t.onChange(async (v) => {
           this.plugin.settings.ignorePaths = v.split('\n').map((s) => s.trim()).filter(Boolean);
           await this.plugin.saveSettings();
         });
       });
+    const ignoreHint = ignoreSetting.descEl.createDiv({ cls: 'fpu-setting-hint' });
+    ignoreHint.setText('Supports * (one segment) and ** (any depth) wildcards.');
 
     // ---- History (one row per rename event)
     if (!this.expandedGroups) this.expandedGroups = new Set();

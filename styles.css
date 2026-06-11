@@ -45,6 +45,14 @@
 .pt-status-pill.failed   { background: var(--color-red);    color: #ffffff; }
 .pt-status-pill.superseded { background: var(--background-modifier-border); color: var(--text-muted); }
 
+/* ========== Small hint under settings (e.g. glob wildcards available) ========== */
+.fpu-setting-hint {
+  margin-top: 4px;
+  font-size: 0.78em;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
 /* ========== Pending modal — summary header ========== */
 .path-tracker-summary {
   margin-bottom: 14px;

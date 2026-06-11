@@ -132,6 +132,57 @@ button.fpu-goto-btn:hover {
   background: var(--background-modifier-hover);
 }
 
+/* ========== Redirect-after-delete modal ========== */
+.fpu-redirect-modal .fpu-redirect-label {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-top: 14px;
+  margin-bottom: 4px;
+}
+.fpu-redirect-modal .fpu-redirect-intro {
+  margin-bottom: 8px;
+}
+.fpu-redirect-modal .fpu-redirect-deleted {
+  font-family: var(--font-monospace);
+  font-size: 0.92em;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--background-secondary);
+  word-break: break-word;
+}
+.fpu-redirect-modal .fpu-redirect-count {
+  margin-top: 6px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+.fpu-redirect-modal .fpu-redirect-input {
+  padding: 8px 10px;
+  font-family: var(--font-monospace);
+  font-size: 0.92em;
+}
+.fpu-redirect-modal .fpu-redirect-preview {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--background-secondary);
+  font-size: 0.88em;
+}
+.fpu-redirect-modal .fpu-redirect-preview-muted {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.fpu-redirect-modal .fpu-redirect-buttons {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.fpu-redirect-modal .fpu-redirect-buttons button {
+  padding: 6px 16px;
+}
+
 /* ========== Highlight pulse on the targeted setting field ========== */
 .fpu-setting-highlight {
   outline: 2px solid var(--interactive-accent);

@@ -2,6 +2,8 @@
 
 const obsidian = require('obsidian');
 const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFolder, TFile, normalizePath } = obsidian;
+// AbstractInputSuggest may not exist in very old Obsidian builds; fall back gracefully.
+const AbstractInputSuggest = obsidian.AbstractInputSuggest || null;
 
 const DEFAULT_SETTINGS = {
   mode: 'manual',                  // 'auto' | 'manual' | 'notify'
@@ -180,6 +182,16 @@ class PathTrackerPlugin extends Plugin {
     this.renameBatch = [];
     this.renameBatchTimer = null;
     this.suppressRenameEvents = false;
+
+    // Delete events: scan for orphan references; if any, surface a Redirect notice.
+    // No notice when zero references — deletes are common and shouldn't be noisy.
+    this.registerEvent(this.app.vault.on('delete', (file) => {
+      if (this.suppressRenameEvents) return;
+      this.handleDelete(file).catch((err) => {
+        console.error('[Folder Path Updater] delete handler failed:', err);
+      });
+    }));
+
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
       if (this.suppressRenameEvents) return; // we triggered this rename ourselves (undo/reapply)
       if (!oldPath || !file || oldPath === file.path) return;
@@ -1065,6 +1077,116 @@ class PathTrackerPlugin extends Plugin {
     await this.handleRenameBatch(fakeBatch);
   }
 
+  // Delete-event entry point. Find references to the deleted path; if any,
+  // show a notice with a Redirect button. Silent when nothing references it.
+  async handleDelete(file) {
+    if (!file || !file.path) return;
+    const deletedPath = file.path;
+    if (this.settings.ignorePaths.some((p) => {
+      const re = globToRegex(p);
+      return re && re.test(deletedPath);
+    })) return;
+    const isFolder = file instanceof TFolder;
+    const refs = await this.findReferencesToPath(deletedPath, isFolder);
+    if (refs.length === 0) return; // silent
+    const baseName = deletedPath.split('/').pop();
+    this.fpuNotice({
+      status: `${refs.length} reference${refs.length === 1 ? '' : 's'} still point${refs.length === 1 ? 's' : ''} to "${baseName}"`,
+      subText: deletedPath,
+      persistent: true,
+      buttons: [{
+        text: 'Redirect',
+        cta: true,
+        onClick: () => new RedirectModal(this.app, this, deletedPath, isFolder, refs).open(),
+      }],
+    });
+  }
+
+  // Scan known settings + (optionally) frontmatter for any value that matches
+  // `path` as an exact reference or a folder-prefix. Returns a list of refs:
+  // { target, keyPath, value, matchKind }.
+  async findReferencesToPath(path, isFolder) {
+    const refs = [];
+    const placeholder = '__FPU_REDIRECT_PLACEHOLDER__';
+    const targets = await this.collectTargets();
+    for (const t of targets) {
+      let data;
+      try { data = JSON.parse(await this.app.vault.adapter.read(t.path)); }
+      catch (e) { continue; }
+      const matches = [];
+      this.scanForPaths(data, path, placeholder, isFolder, [], '', matches);
+      for (const m of matches) {
+        refs.push({ target: t, keyPath: m.keyPath, value: m.oldValue, matchKind: m.kind });
+      }
+    }
+    if (this.settings.scanFrontmatter && this.settings.frontmatterAllowlist.length) {
+      const allow = new Set(this.settings.frontmatterAllowlist.map((s) => s.toLowerCase()));
+      for (const f of this.app.vault.getMarkdownFiles()) {
+        const cache = this.app.metadataCache.getFileCache(f);
+        const fm = cache && cache.frontmatter;
+        if (!fm) continue;
+        for (const key of Object.keys(fm)) {
+          if (key === 'position') continue;
+          if (!allow.has(key.toLowerCase())) continue;
+          const val = fm[key];
+          const check = (v, kp) => {
+            if (typeof v !== 'string') return;
+            const m = this.matchPath(v, path, placeholder, isFolder, key);
+            if (m) refs.push({ target: { path: f.path, label: f.path, scope: 'frontmatter' }, keyPath: kp, value: v, matchKind: m.kind });
+          };
+          if (Array.isArray(val)) val.forEach((v, i) => check(v, [key, i]));
+          else check(val, [key]);
+        }
+      }
+    }
+    return refs;
+  }
+
+  // Re-target the previously discovered refs at `newPath` and run them through
+  // the user's current Mode (or force manual review if opts.forceManual).
+  async runRedirect(oldPath, newPath, isFolder, refs, opts) {
+    opts = opts || {};
+    if (!newPath || newPath === oldPath) return;
+    const proposals = [];
+    for (const ref of refs) {
+      const m = this.matchPath(ref.value, oldPath, newPath, isFolder, ref.keyPath[ref.keyPath.length - 1] || '');
+      if (!m) continue;
+      proposals.push({
+        id: ++this.entryIdCounter,
+        ts: Date.now(),
+        oldPath,
+        newPath,
+        sourceFile: ref.target.path,
+        sourceLabel: ref.target.label,
+        scope: ref.target.scope,
+        keyPath: ref.keyPath,
+        oldValue: ref.value,
+        newValue: m.newValue,
+        matchKind: m.kind,
+        status: 'pending',
+        originalFileContent: null,
+        sessionId: this.currentSessionId,
+        note: 'redirect after delete',
+      });
+    }
+    if (proposals.length === 0) return;
+    const mode = opts.forceManual ? 'manual' : this.settings.mode;
+    if (mode === 'manual') {
+      for (const p of proposals) {
+        this.pending.push(p);
+        this.session.push(p);
+      }
+      this.markHistoryDirty();
+      this.openPendingModal();
+      return;
+    }
+    const summary = await this.applyProposals(proposals);
+    this.fpuNotice({
+      status: this.formatRevertStatus('Redirected', summary.applied, summary.failed),
+      paths: [{ oldPath, newPath }],
+    });
+  }
+
   // Broken path scanner: walk known settings and surface values that look like
   // vault paths but no longer exist on disk.
   async scanBrokenPaths() {
@@ -1876,6 +1998,89 @@ class ManualRewriteModal extends Modal {
       if (oldP === newP)  { new Notice('Old and new paths are identical.'); return; }
       this.close();
       await this.plugin.runManualRewrite(oldP, newP, asFolder);
+    };
+  }
+  onClose() { this.contentEl.empty(); }
+}
+
+// ============================================================================
+// Redirect-after-delete modal — opens from a delete notice's "Redirect" button.
+// User picks a new path; we rewrite the orphan references to point there.
+// ============================================================================
+const PathSuggest = AbstractInputSuggest ? class extends AbstractInputSuggest {
+  constructor(app, inputEl) { super(app, inputEl); }
+  getSuggestions(query) {
+    const q = (query || '').toLowerCase();
+    const files = this.app.vault.getAllLoadedFiles();
+    return files
+      .filter((f) => f && f.path && f.path !== '/' && f.path.toLowerCase().includes(q))
+      .slice(0, 30);
+  }
+  renderSuggestion(file, el) { el.setText(file.path); }
+  selectSuggestion(file) {
+    this.setValue(file.path);
+    this.close();
+    // Fire an input event so the modal's preview updates
+    const evt = new Event('input', { bubbles: true });
+    this.inputEl && this.inputEl.dispatchEvent(evt);
+  }
+} : null;
+
+class RedirectModal extends Modal {
+  constructor(app, plugin, deletedPath, isFolder, refs) {
+    super(app);
+    this.plugin = plugin;
+    this.deletedPath = deletedPath;
+    this.isFolder = isFolder;
+    this.refs = refs;
+    this.newPath = '';
+  }
+  onOpen() {
+    this.titleEl.setText('Redirect references');
+    const { contentEl } = this;
+    contentEl.addClass('fpu-redirect-modal');
+
+    const intro = contentEl.createDiv({ cls: 'fpu-redirect-intro' });
+    intro.createDiv({ text: 'Deleted:' }).addClass('fpu-redirect-label');
+    const deletedRow = intro.createDiv({ cls: 'fpu-redirect-deleted' });
+    deletedRow.setText(this.deletedPath);
+    intro.createDiv({ cls: 'fpu-redirect-count', text: `${this.refs.length} reference${this.refs.length === 1 ? '' : 's'} still point here.` });
+
+    contentEl.createDiv({ cls: 'fpu-redirect-label', text: 'Redirect to:' });
+    const input = contentEl.createEl('input', { type: 'text', cls: 'fpu-redirect-input' });
+    input.placeholder = 'Type or pick a path…';
+    input.style.width = '100%';
+    if (PathSuggest) new PathSuggest(this.app, input);
+
+    const preview = contentEl.createDiv({ cls: 'fpu-redirect-preview' });
+    const updatePreview = () => {
+      this.newPath = input.value.trim();
+      preview.empty();
+      if (!this.newPath) {
+        preview.setText('Pick a path above to see what will be updated.');
+        preview.addClass('fpu-redirect-preview-muted');
+        return;
+      }
+      preview.removeClass('fpu-redirect-preview-muted');
+      preview.setText(`${this.refs.length} reference${this.refs.length === 1 ? '' : 's'} will be updated.`);
+    };
+    input.addEventListener('input', updatePreview);
+    updatePreview();
+    setTimeout(() => input.focus(), 50);
+
+    const btns = contentEl.createDiv({ cls: 'fpu-redirect-buttons' });
+    const apply = btns.createEl('button', { text: 'Apply', cls: 'mod-cta' });
+    apply.onclick = async () => {
+      if (!this.newPath || this.newPath === this.deletedPath) return;
+      this.close();
+      await this.plugin.runRedirect(this.deletedPath, this.newPath, this.isFolder, this.refs);
+    };
+    const view = btns.createEl('button', { text: 'View details' });
+    view.title = 'Open the review modal regardless of your current Mode.';
+    view.onclick = async () => {
+      if (!this.newPath || this.newPath === this.deletedPath) return;
+      this.close();
+      await this.plugin.runRedirect(this.deletedPath, this.newPath, this.isFolder, this.refs, { forceManual: true });
     };
   }
   onClose() { this.contentEl.empty(); }

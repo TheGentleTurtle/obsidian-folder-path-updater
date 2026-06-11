@@ -144,6 +144,50 @@ class PathTrackerPlugin extends Plugin {
       !batch.some((other) => other !== b && other.isFolder && b.oldPath.startsWith(other.oldPath + '/'))
     );
 
+    // --- Chain-rename detection ---
+    // If a previous rename A→B was skipped/pending and the user now does B→C,
+    // settings still reference A (not B). Walk the skipped/pending entries
+    // backwards from b.oldPath to discover any earlier names that still need
+    // rewriting to b.newPath.
+    const chainSources = this.session.filter(
+      (e) => e.status === 'skipped' || e.status === 'pending'
+    );
+    const chainedExtras = [];
+    const supersededByChain = new Set();
+    for (const b of batch) {
+      const origins = new Set();
+      const visited = new Set([b.newPath]);
+      const queue = [b.oldPath];
+      while (queue.length) {
+        const path = queue.shift();
+        if (visited.has(path)) continue;
+        visited.add(path);
+        for (const e of chainSources) {
+          if (e.newPath === path) {
+            origins.add(e.oldPath);
+            supersededByChain.add(e.id);
+            queue.push(e.oldPath);
+          }
+        }
+      }
+      origins.delete(b.oldPath);
+      origins.delete(b.newPath);
+      for (const origin of origins) {
+        chainedExtras.push({ oldPath: origin, newPath: b.newPath, isFolder: b.isFolder, chained: true });
+      }
+    }
+    if (chainedExtras.length) batch = batch.concat(chainedExtras);
+    // Mark superseded chain-source entries so they don't haunt the history.
+    if (supersededByChain.size) {
+      for (const e of this.session) {
+        if (supersededByChain.has(e.id) && (e.status === 'skipped' || e.status === 'pending')) {
+          e.status = 'superseded';
+          e.note = (e.note ? e.note + '; ' : '') + 'superseded by later rename';
+        }
+      }
+      this.pending = this.pending.filter((p) => !supersededByChain.has(p.id));
+    }
+
     // --- Auto-cancel pending entries that this rename inverts ---
     // If a pending entry says "A -> B" and now the user has renamed B back to A,
     // applying the pending would point configs at a folder that no longer exists.
@@ -1223,7 +1267,7 @@ class PathTrackerSettingTab extends PluginSettingTab {
       if (e.ts > g.latestTs) g.latestTs = e.ts;
     }
     for (const g of groups.values()) {
-      g.counts = { applied: 0, skipped: 0, reverted: 0, failed: 0, pending: 0 };
+      g.counts = { applied: 0, skipped: 0, reverted: 0, failed: 0, pending: 0, superseded: 0 };
       for (const e of g.entries) if (g.counts[e.status] !== undefined) g.counts[e.status]++;
     }
     const groupList = Array.from(groups.values()).sort((a, b) => b.latestTs - a.latestTs);
@@ -1282,7 +1326,7 @@ class PathTrackerSettingTab extends PluginSettingTab {
     ts.title = new Date(g.latestTs).toLocaleString();
     const line2 = title.createDiv({ cls: 'path-tracker-history-status' });
     // Status pills for each non-zero status
-    const order = ['applied', 'reverted', 'pending', 'skipped', 'failed'];
+    const order = ['applied', 'reverted', 'pending', 'skipped', 'superseded', 'failed'];
     let any = false;
     for (const k of order) {
       if (g.counts[k]) { appendStatusPill(line2, k, g.counts[k]); any = true; }

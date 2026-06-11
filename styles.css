@@ -43,6 +43,7 @@
 .pt-status-pill.skipped  { background: var(--background-modifier-border); color: var(--text-normal); }
 .pt-status-pill.reverted { background: var(--color-blue);   color: #ffffff; }
 .pt-status-pill.failed   { background: var(--color-red);    color: #ffffff; }
+.pt-status-pill.superseded { background: var(--background-modifier-border); color: var(--text-muted); }
 
 /* ========== Pending modal — summary header ========== */
 .path-tracker-summary {

@@ -77,6 +77,39 @@ function globToRegex(pattern) {
   }
 }
 
+// Resolve the Obsidian settings tab id for a given history entry.
+// Community plugins use their plugin id; core configs use the basename minus
+// '.json' (with one rename: app.json → 'file' for Files & Links).
+function tabIdForEntry(entry) {
+  if (entry && typeof entry.scope === 'string' && entry.scope.startsWith('plugin:')) {
+    return entry.scope.slice('plugin:'.length);
+  }
+  const base = ((entry && entry.sourceFile) || '').split('/').pop().replace(/\.json$/, '');
+  if (base === 'app') return 'file';
+  return base;
+}
+
+// Look through the rendered settings tab DOM for a .setting-item whose name
+// matches our humanized field label. Loose matching: case-insensitive contains
+// either direction so e.g. 'Folder' matches 'Folder' or 'Folder to create new notes in'.
+function findSettingItemByLabel(root, label) {
+  if (!root || !label) return null;
+  const target = label.toLowerCase();
+  const items = root.querySelectorAll('.setting-item');
+  let best = null;
+  for (const item of items) {
+    const nameEl = item.querySelector('.setting-item-name');
+    if (!nameEl) continue;
+    const text = (nameEl.textContent || '').trim().toLowerCase();
+    if (!text) continue;
+    if (text === target) return item; // exact match wins
+    if (text.includes(target) || target.includes(text)) {
+      if (!best) best = item;
+    }
+  }
+  return best;
+}
+
 // Render a rename pair as basenames only when both share the same parent directory,
 // otherwise show the full paths. Caller is responsible for adding a title= tooltip.
 function formatPathPair(oldPath, newPath) {
@@ -855,6 +888,32 @@ class PathTrackerPlugin extends Plugin {
 
   openPendingModal() {
     new PendingModal(this.app, this).open();
+  }
+
+  // Open the Obsidian settings tab where this entry was applied, then try to
+  // scroll to and highlight the matching field. If the field can't be located
+  // (label changed in a newer version, etc.), gracefully degrade to just
+  // showing the tab.
+  async openSettingsForEntry(entry) {
+    const tabId = tabIdForEntry(entry);
+    try {
+      this.app.setting.open();
+      if (tabId) this.app.setting.openTabById(tabId);
+    } catch (e) {
+      console.warn('[Folder Path Updater] could not open settings tab:', tabId, e);
+      return;
+    }
+    // Wait for the tab content to render
+    await new Promise((r) => setTimeout(r, 250));
+    const tabContent = document.querySelector('.modal.mod-settings .vertical-tab-content');
+    if (!tabContent) return;
+    const targetLabel = humanizeKeyPath(entry.keyPath || []);
+    if (!targetLabel) return;
+    const target = findSettingItemByLabel(tabContent, targetLabel);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('fpu-setting-highlight');
+    setTimeout(() => target.classList.remove('fpu-setting-highlight'), 2500);
   }
 
   // User-initiated reload of the Obsidian window. Invoked only from explicit
@@ -1638,6 +1697,11 @@ class PathTrackerSettingTab extends PluginSettingTab {
             const a = top.createEl('button', { cls: 'path-tracker-line-btn', text: 'Apply' });
             a.onclick = async () => { await this.plugin.applyProposals([e]); this.display(); };
           }
+          // Small "open in settings" arrow
+          const goto = top.createEl('button', { cls: 'fpu-goto-btn', text: '↗' });
+          goto.setAttr('aria-label', 'Open the related setting');
+          goto.title = 'Open the related setting';
+          goto.onclick = () => this.plugin.openSettingsForEntry(e);
           const diff = line.createDiv({ cls: 'path-tracker-line-diff' });
           diff.title = `${e.oldValue}\n→\n${e.newValue}`;
           renderInlineDiff(diff, e.oldValue, e.newValue);

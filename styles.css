@@ -114,6 +114,36 @@
   font-size: 0.85em;
 }
 
+/* ========== "Open settings" small arrow button on history rows ========== */
+button.fpu-goto-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  margin-left: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+button.fpu-goto-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+/* ========== Highlight pulse on the targeted setting field ========== */
+.fpu-setting-highlight {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+  animation: fpu-setting-pulse 1.6s ease-out;
+}
+@keyframes fpu-setting-pulse {
+  0%   { background: rgba(127, 127, 255, 0.20); }
+  60%  { background: rgba(127, 127, 255, 0.10); }
+  100% { background: transparent; }
+}
+
 /* ========== Pending modal — summary header ========== */
 .path-tracker-summary {
   margin-bottom: 14px;

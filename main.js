@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
   mode: 'manual',                  // 'auto' | 'manual' | 'notify'
   reloadPluginsAfterUpdate: true,  // disable/enable plugin so it picks up the new path
   notifyOnNoChanges: true,         // show a brief Notice on renames where nothing references the path
+  backupRetentionDays: 30,         // 0 = never delete
   ignorePaths: [],
 };
 
@@ -106,6 +107,10 @@ class PathTrackerPlugin extends Plugin {
         });
       }, 400);
     }));
+
+    // Prune old backup snapshots a couple seconds after startup so we don't
+    // race the rest of plugin load.
+    setTimeout(() => { this.pruneBackups().catch((e) => console.warn('[Folder Path Updater] prune failed:', e)); }, 2000);
   }
 
   onunload() {
@@ -628,6 +633,35 @@ class PathTrackerPlugin extends Plugin {
     const stamp = `${idStamp}-${Date.now()}`;
     const out = `${dir}/${stamp}__${safeName}`;
     await this.app.vault.adapter.write(out, raw);
+  }
+
+  // Delete backup snapshots older than backupRetentionDays. Filenames are
+  // `<id>-<unixMs>__<safe>` so we can parse the timestamp directly.
+  async pruneBackups() {
+    const days = this.settings.backupRetentionDays;
+    if (!days || days <= 0) return; // 0 = never
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const cfg = this.app.vault.configDir;
+    const dir = `${cfg}/plugins/folder-path-updater/backups`;
+    if (!(await this.app.vault.adapter.exists(dir))) return;
+    const listing = await this.app.vault.adapter.list(dir);
+    let removed = 0;
+    for (const f of listing.files) {
+      const base = f.split('/').pop();
+      const match = base && base.match(/^\d+-(\d+)__/);
+      if (!match) continue;
+      const ts = parseInt(match[1], 10);
+      if (!ts || ts >= cutoff) continue;
+      try {
+        await this.app.vault.adapter.remove(f);
+        removed++;
+      } catch (e) {
+        console.warn('[Folder Path Updater] could not remove old backup', f, e);
+      }
+    }
+    if (removed > 0) {
+      console.log(`[Folder Path Updater] pruned ${removed} backup snapshot${removed === 1 ? '' : 's'} older than ${days} days`);
+    }
   }
 
   setByKeyPath(obj, keyPath, value) {
@@ -1238,6 +1272,17 @@ class PathTrackerSettingTab extends PluginSettingTab {
       .setName('Notify on every rename')
       .setDesc('Show a brief notice even when nothing references the renamed folder, so you know the plugin ran. Turn off if it becomes noisy during large reorganizations.')
       .addToggle((t) => t.setValue(this.plugin.settings.notifyOnNoChanges).onChange(async (v) => { this.plugin.settings.notifyOnNoChanges = v; await this.plugin.saveSettings(); }));
+
+    new Setting(containerEl)
+      .setName('Backup retention')
+      .setDesc('Snapshots of every modified settings file live in .obsidian/plugins/folder-path-updater/backups/. Older files are deleted automatically on plugin load.')
+      .addDropdown((d) => d
+        .addOption('7', '7 days')
+        .addOption('30', '30 days (recommended)')
+        .addOption('90', '90 days')
+        .addOption('0', 'Never delete')
+        .setValue(String(this.plugin.settings.backupRetentionDays))
+        .onChange(async (v) => { this.plugin.settings.backupRetentionDays = parseInt(v, 10) || 0; await this.plugin.saveSettings(); }));
 
     new Setting(containerEl)
       .setName('Ignore paths (one per line)')

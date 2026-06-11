@@ -8,6 +8,8 @@ const DEFAULT_SETTINGS = {
   reloadPluginsAfterUpdate: true,  // disable/enable plugin so it picks up the new path
   notifyOnNoChanges: true,         // show a brief Notice on renames where nothing references the path
   backupRetentionDays: 30,         // 0 = never delete
+  scanFrontmatter: false,          // also scan note frontmatter properties for path values
+  frontmatterAllowlist: [],        // property names (lowercased) that may hold paths
   ignorePaths: [],
 };
 
@@ -361,6 +363,49 @@ class PathTrackerPlugin extends Plugin {
       }
     }
 
+    // ---- Frontmatter scan (opt-in) ----
+    if (this.settings.scanFrontmatter && this.settings.frontmatterAllowlist.length) {
+      const allow = new Set(this.settings.frontmatterAllowlist.map((s) => s.toLowerCase()));
+      for (const file of this.app.vault.getMarkdownFiles()) {
+        const cache = this.app.metadataCache.getFileCache(file);
+        const fm = cache && cache.frontmatter;
+        if (!fm) continue;
+        for (const key of Object.keys(fm)) {
+          if (key === 'position') continue; // internal field
+          if (!allow.has(key.toLowerCase())) continue;
+          const value = fm[key];
+          const stringMatches = (val, keyPathSegments) => {
+            if (typeof val !== 'string') return;
+            for (const b of batch) {
+              const m = this.matchPath(val, b.oldPath, b.newPath, b.isFolder, key);
+              if (!m) continue;
+              proposals.push({
+                id: ++this.entryIdCounter,
+                ts: Date.now(),
+                oldPath: b.oldPath,
+                newPath: b.newPath,
+                sourceFile: file.path,
+                sourceLabel: file.path,
+                scope: 'frontmatter',
+                keyPath: keyPathSegments,
+                oldValue: val,
+                newValue: m.newValue,
+                matchKind: m.kind,
+                status: 'pending',
+                originalFileContent: null,
+                sessionId: this.currentSessionId,
+              });
+            }
+          };
+          if (Array.isArray(value)) {
+            for (let i = 0; i < value.length; i++) stringMatches(value[i], [key, i]);
+          } else {
+            stringMatches(value, [key]);
+          }
+        }
+      }
+    }
+
     if (proposals.length === 0) {
       if (autoCancelled > 0) {
         this.fpuNotice({
@@ -530,6 +575,11 @@ class PathTrackerPlugin extends Plugin {
     const adapter = this.app.vault.adapter;
 
     for (const [file, props] of byFile) {
+      // Frontmatter proposals follow a different write path
+      if (props[0].scope === 'frontmatter') {
+        await this.applyFrontmatterFile(file, props, summary);
+        continue;
+      }
       let raw;
       try { raw = await adapter.read(file); }
       catch (e) {
@@ -601,6 +651,52 @@ class PathTrackerPlugin extends Plugin {
     this.settingTab.refreshIfOpen();
     this.markHistoryDirty();
     return summary;
+  }
+
+  // Apply a batch of frontmatter proposals targeting one note. Uses
+  // app.fileManager.processFrontMatter so the YAML formatter and property
+  // ordering Obsidian uses elsewhere are preserved.
+  async applyFrontmatterFile(filePath, props, summary) {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!file || !(file instanceof TFile)) {
+      for (const p of props) { p.status = 'failed'; p.error = 'note not found'; summary.failed++; }
+      return;
+    }
+    let raw;
+    try { raw = await this.app.vault.read(file); }
+    catch (e) {
+      for (const p of props) { p.status = 'failed'; p.error = `read failed: ${e.message}`; summary.failed++; }
+      return;
+    }
+    for (const p of props) p.originalFileContent = raw;
+    if (ALWAYS_ON.backupBeforeWrite) {
+      try { await this.writeBackup(filePath, raw, props[0].id); }
+      catch (e) { console.warn('[Folder Path Updater] backup failed', e); }
+    }
+    const succeeded = [];
+    try {
+      await this.app.fileManager.processFrontMatter(file, (fm) => {
+        for (const p of props) {
+          try {
+            this.setByKeyPath(fm, p.keyPath, p.newValue);
+            succeeded.push(p);
+          } catch (e) {
+            p.status = 'failed';
+            p.error = `key path missing: ${e.message}`;
+            summary.failed++;
+          }
+        }
+      });
+    } catch (e) {
+      for (const p of props) { p.status = 'failed'; p.error = `write failed: ${e.message}`; summary.failed++; }
+      return;
+    }
+    for (const p of succeeded) {
+      p.status = 'applied';
+      this.pending = this.pending.filter((q) => q.id !== p.id);
+      summary.applied++;
+      summary.scopes.add(this.friendlyLabel(p));
+    }
   }
 
   async applyAllPending() {
@@ -698,11 +794,19 @@ class PathTrackerPlugin extends Plugin {
       return;
     }
     try {
-      const adapter = this.app.vault.adapter;
-      const raw = await adapter.read(entry.sourceFile);
-      const data = JSON.parse(raw);
-      this.setByKeyPath(data, entry.keyPath, entry.newValue);
-      await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
+      if (entry.scope === 'frontmatter') {
+        const file = this.app.vault.getAbstractFileByPath(entry.sourceFile);
+        if (!file || !(file instanceof TFile)) throw new Error('note not found');
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+          this.setByKeyPath(fm, entry.keyPath, entry.newValue);
+        });
+      } else {
+        const adapter = this.app.vault.adapter;
+        const raw = await adapter.read(entry.sourceFile);
+        const data = JSON.parse(raw);
+        this.setByKeyPath(data, entry.keyPath, entry.newValue);
+        await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
+      }
       entry.status = 'applied';
       // Also rename the folder/file forward (once per group; subsequent calls no-op)
       await this.maybeRenameVaultPath(entry.oldPath, entry.newPath);
@@ -724,11 +828,19 @@ class PathTrackerPlugin extends Plugin {
       return;
     }
     try {
-      const adapter = this.app.vault.adapter;
-      const raw = await adapter.read(entry.sourceFile);
-      const data = JSON.parse(raw);
-      this.setByKeyPath(data, entry.keyPath, entry.oldValue);
-      await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
+      if (entry.scope === 'frontmatter') {
+        const file = this.app.vault.getAbstractFileByPath(entry.sourceFile);
+        if (!file || !(file instanceof TFile)) throw new Error('note not found');
+        await this.app.fileManager.processFrontMatter(file, (fm) => {
+          this.setByKeyPath(fm, entry.keyPath, entry.oldValue);
+        });
+      } else {
+        const adapter = this.app.vault.adapter;
+        const raw = await adapter.read(entry.sourceFile);
+        const data = JSON.parse(raw);
+        this.setByKeyPath(data, entry.keyPath, entry.oldValue);
+        await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
+      }
       entry.status = 'reverted';
       // Also rename the folder/file back (once per group; subsequent calls no-op)
       await this.maybeRenameVaultPath(entry.newPath, entry.oldPath);
@@ -893,8 +1005,14 @@ class PathTrackerPlugin extends Plugin {
   // Open the Obsidian settings tab where this entry was applied, then try to
   // scroll to and highlight the matching field. If the field can't be located
   // (label changed in a newer version, etc.), gracefully degrade to just
-  // showing the tab.
+  // showing the tab. Frontmatter entries open the note instead.
   async openSettingsForEntry(entry) {
+    if (entry.scope === 'frontmatter') {
+      const leaf = this.app.workspace.getLeaf(true);
+      const file = this.app.vault.getAbstractFileByPath(entry.sourceFile);
+      if (file && file instanceof TFile) await leaf.openFile(file);
+      return;
+    }
     const tabId = tabIdForEntry(entry);
     try {
       this.app.setting.open();
@@ -994,6 +1112,7 @@ class PathTrackerPlugin extends Plugin {
 
   // Friendly name for a target entry, e.g. "Calendar" or "Daily Notes (core)"
   friendlyLabel(entry) {
+    if (entry.scope === 'frontmatter') return entry.sourceFile;
     if (entry.scope && entry.scope.startsWith('plugin:')) {
       const id = entry.scope.slice('plugin:'.length);
       try {
@@ -1013,6 +1132,7 @@ class PathTrackerPlugin extends Plugin {
 
   // Category for the header tag: "Community plugin", "Built-in", etc.
   categoryFor(entry) {
+    if (entry.scope === 'frontmatter') return 'Note frontmatter';
     if (entry.scope && entry.scope.startsWith('plugin:')) return 'Community plugin';
     return 'Built-in feature';
   }
@@ -1044,9 +1164,8 @@ function formatRelativeTime(ts) {
 
 // Render a small colored pill that says what kind of source this is
 function appendCategoryPill(parent, category) {
-  if (category === 'Community plugin') {
-    return parent.createSpan({ cls: 'pt-pill plugin', text: 'PLUGIN' });
-  }
+  if (category === 'Community plugin') return parent.createSpan({ cls: 'pt-pill plugin', text: 'PLUGIN' });
+  if (category === 'Note frontmatter') return parent.createSpan({ cls: 'pt-pill frontmatter', text: 'NOTE' });
   return parent.createSpan({ cls: 'pt-pill core', text: 'CORE' });
 }
 
@@ -1418,6 +1537,27 @@ class PathTrackerSettingTab extends PluginSettingTab {
       .setName('Notify on every rename')
       .setDesc('Show a brief notice even when nothing references the renamed folder, so you know the plugin ran. Turn off if it becomes noisy during large reorganizations.')
       .addToggle((t) => t.setValue(this.plugin.settings.notifyOnNoChanges).onChange(async (v) => { this.plugin.settings.notifyOnNoChanges = v; await this.plugin.saveSettings(); }));
+
+    new Setting(containerEl)
+      .setName('Also scan note frontmatter')
+      .setDesc('Look for path references inside YAML frontmatter properties of your notes. Only property names on the allowlist below are checked, so unrelated properties like tags or labels are never touched.')
+      .addToggle((t) => t.setValue(this.plugin.settings.scanFrontmatter).onChange(async (v) => { this.plugin.settings.scanFrontmatter = v; await this.plugin.saveSettings(); }));
+
+    const fmSetting = new Setting(containerEl)
+      .setName('Frontmatter property allowlist (one per line)')
+      .setDesc('Properties whose value can be rewritten when a folder or file is renamed. Empty by default — add only properties you know hold paths.')
+      .addTextArea((t) => {
+        t.setValue((this.plugin.settings.frontmatterAllowlist || []).join('\n'));
+        t.inputEl.rows = 4;
+        t.inputEl.style.width = '100%';
+        t.inputEl.setAttr('placeholder', 'template\ntemplates_folder\nattachmentFolderPath');
+        t.onChange(async (v) => {
+          this.plugin.settings.frontmatterAllowlist = v.split('\n').map((s) => s.trim()).filter(Boolean);
+          await this.plugin.saveSettings();
+        });
+      });
+    const fmHint = fmSetting.descEl.createDiv({ cls: 'fpu-setting-hint' });
+    fmHint.setText('Property names are matched case-insensitively.');
 
     new Setting(containerEl)
       .setName('Backup retention')

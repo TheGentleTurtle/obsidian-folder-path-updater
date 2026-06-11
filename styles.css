@@ -23,8 +23,9 @@
   vertical-align: middle;
   line-height: 1.4;
 }
-.pt-pill.core   { background: var(--color-blue);   color: #ffffff; }
-.pt-pill.plugin { background: var(--color-purple); color: #ffffff; }
+.pt-pill.core        { background: var(--color-blue);   color: #ffffff; }
+.pt-pill.plugin      { background: var(--color-purple); color: #ffffff; }
+.pt-pill.frontmatter { background: var(--color-cyan, var(--color-blue)); color: #ffffff; }
 
 /* ========== Status pills (APPLIED / REVERTED / etc.) ========== */
 .pt-status-pill {

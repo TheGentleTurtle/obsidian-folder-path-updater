@@ -34,6 +34,19 @@ const KNOWN_CORE_FILES = Object.keys(CORE_FILE_LABELS);
 // Key names that strongly suggest a path-typed value
 const PATH_KEY_RE = /folder|directory|^dir$|path|template|file|location|attachment/i;
 
+// Render a rename pair as basenames only when both share the same parent directory,
+// otherwise show the full paths. Caller is responsible for adding a title= tooltip.
+function formatPathPair(oldPath, newPath) {
+  const oldParts = String(oldPath || '').split('/');
+  const newParts = String(newPath || '').split('/');
+  const oldBase = oldParts[oldParts.length - 1] || oldPath;
+  const newBase = newParts[newParts.length - 1] || newPath;
+  const oldDir = oldParts.slice(0, -1).join('/');
+  const newDir = newParts.slice(0, -1).join('/');
+  if (oldDir === newDir) return `${oldBase} → ${newBase}`;
+  return `${oldPath} → ${newPath}`;
+}
+
 class PathTrackerPlugin extends Plugin {
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -184,73 +197,50 @@ class PathTrackerPlugin extends Plugin {
 
     if (proposals.length === 0) {
       if (autoCancelled > 0) {
-        const summaryLine = batch.length === 1
-          ? `"${batch[0].oldPath}" → "${batch[0].newPath}"`
-          : `${batch.length} renames`;
-        const n = new Notice('', 8000);
-        n.noticeEl.empty();
-        n.noticeEl.addClass('fpu-notice');
-        const title = n.noticeEl.createDiv();
-        title.style.cssText = 'font-weight:600;margin-bottom:2px;';
-        title.setText(`Folder Path Updater: ${summaryLine}`);
-        n.noticeEl.createDiv({ text: 'Already in sync — no action needed.' });
+        this.fpuNotice({
+          status: 'Already in sync (no action needed)',
+          paths: batch.map((b) => ({ oldPath: b.oldPath, newPath: b.newPath })),
+          timeout: 16000,
+        });
         this.settingTab.refreshIfOpen();
       } else if (this.settings.notifyOnNoChanges) {
-        const summaryLine = batch.length === 1
-          ? `"${batch[0].oldPath}" → "${batch[0].newPath}"`
-          : `${batch.length} renames`;
-        const n = new Notice('', 5000);
-        n.noticeEl.empty();
-        n.noticeEl.addClass('fpu-notice');
-        const title = n.noticeEl.createDiv();
-        title.style.cssText = 'font-weight:600;margin-bottom:2px;';
-        title.setText(`Folder Path Updater: ${summaryLine}`);
-        n.noticeEl.createDiv({ text: '0 references to update.' });
+        this.fpuNotice({
+          status: '0 references to update',
+          paths: batch.map((b) => ({ oldPath: b.oldPath, newPath: b.newPath })),
+          timeout: 10000,
+        });
       }
       return;
     }
 
-    const summaryLine = batch.length === 1
-      ? `"${batch[0].oldPath}" → "${batch[0].newPath}"`
-      : `${batch.length} renames`;
+    const paths = batch.map((b) => ({ oldPath: b.oldPath, newPath: b.newPath }));
+    const groupKeys = new Set(batch.map((b) => `${b.oldPath}→${b.newPath}`));
+    const openHistoryView = () => {
+      const tab = this.settingTab;
+      if (tab) {
+        if (!tab.expandedGroups) tab.expandedGroups = new Set();
+        for (const k of groupKeys) tab.expandedGroups.add(k);
+      }
+      this.app.setting.open();
+      this.app.setting.openTabById('folder-path-updater');
+    };
 
     if (this.settings.mode === 'auto') {
-      // Apply automatically AND show a notice with what was changed
       const summary = await this.applyProposals(proposals);
-      const groupKeys = new Set(batch.map((b) => `${b.oldPath}→${b.newPath}`));
-      this.notifySummary(summaryLine, summary, groupKeys);
+      this.notifySummary(summary, groupKeys, batch);
     } else if (this.settings.mode === 'notify') {
-      // No action — just log everything as skipped and show a View notice
-      const groupKeys = new Set();
       for (const p of proposals) {
         p.status = 'skipped';
         p.note = 'notify-only mode';
         this.session.push(p);
-        groupKeys.add(`${p.oldPath}→${p.newPath}`);
       }
       this.settingTab.refreshIfOpen();
-
-      const n = new Notice('', 12000);
-      n.noticeEl.empty();
-      const title = n.noticeEl.createDiv();
-      title.style.cssText = 'font-weight:600;margin-bottom:2px;';
-      title.setText(`Folder Path Updater: ${summaryLine}`);
-      const sub = n.noticeEl.createDiv();
-      sub.style.cssText = 'opacity:0.85;';
-      sub.setText(`${proposals.length} reference${proposals.length === 1 ? '' : 's'} found. Nothing changed — no action taken.`);
-      const btns = n.noticeEl.createDiv();
-      btns.style.cssText = 'margin-top:8px;display:flex;gap:6px;';
-      const view = btns.createEl('button', { text: 'View' });
-      view.onclick = () => {
-        n.hide();
-        const tab = this.settingTab;
-        if (tab) {
-          if (!tab.expandedGroups) tab.expandedGroups = new Set();
-          for (const k of groupKeys) tab.expandedGroups.add(k);
-        }
-        this.app.setting.open();
-        this.app.setting.openTabById('folder-path-updater');
-      };
+      this.fpuNotice({
+        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} found (no action taken)`,
+        paths,
+        persistent: true,
+        buttons: [{ text: 'View', onClick: openHistoryView }],
+      });
     } else {
       for (const p of proposals) {
         this.pending.push(p);
@@ -259,27 +249,18 @@ class PathTrackerPlugin extends Plugin {
       this.updateRibbon();
 
       const places = new Set(proposals.map((p) => this.friendlyLabel(p))).size;
-      const n = new Notice('', 12000);
-      n.noticeEl.empty();
-      const title = n.noticeEl.createDiv();
-      title.style.cssText = 'font-weight:600;margin-bottom:2px;';
-      title.setText(`Folder Path Updater: ${summaryLine}`);
-      const sub = n.noticeEl.createDiv();
-      sub.style.cssText = 'opacity:0.85;';
-      sub.setText(`${proposals.length} reference${proposals.length === 1 ? '' : 's'} across ${places} setting${places === 1 ? '' : 's'}.`);
-
-      const btns = n.noticeEl.createDiv();
-      btns.style.cssText = 'margin-top:8px;display:flex;gap:6px;';
-      const review = btns.createEl('button', { text: 'Review' });
-      review.onclick = () => { n.hide(); this.openPendingModal(); };
-      const apply = btns.createEl('button', { text: 'Apply all' });
-      apply.classList.add('mod-cta');
-      apply.onclick = async () => {
-        n.hide();
-        const summary = await this.applyProposals(proposals);
-        const groupKeys = new Set(proposals.map((p) => `${p.oldPath}→${p.newPath}`));
-        this.notifySummary(summaryLine, summary, groupKeys);
-      };
+      this.fpuNotice({
+        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} in ${places} setting${places === 1 ? '' : 's'}`,
+        paths,
+        persistent: true,
+        buttons: [
+          { text: 'Review', onClick: () => this.openPendingModal() },
+          { text: 'Apply all', cta: true, onClick: async () => {
+            const summary = await this.applyProposals(proposals);
+            this.notifySummary(summary, groupKeys, batch);
+          }},
+        ],
+      });
       this.settingTab.refreshIfOpen();
     }
   }
@@ -455,18 +436,21 @@ class PathTrackerPlugin extends Plugin {
 
   async applyAllPending() {
     if (this.pending.length === 0) {
-      new Notice('Folder Path Updater: nothing pending.');
+      this.fpuNotice({ status: 'Nothing pending', timeout: 8000 });
       return;
     }
     const items = this.pending.slice();
     const summary = await this.applyProposals(items);
-    new Notice(`Folder Path Updater: applied ${summary.applied}, failed ${summary.failed}.`);
+    this.fpuNotice({
+      status: this.formatRevertStatus('Applied', summary.applied, summary.failed),
+      paths: this.groupPathsByRename(items, (e) => e.status === 'applied'),
+    });
   }
 
   async revertAllSession() {
     const applied = this.session.filter((e) => e.status === 'applied');
     if (applied.length === 0) {
-      new Notice('Folder Path Updater: nothing applied this session.');
+      this.fpuNotice({ status: 'Nothing applied this session', timeout: 8000 });
       return;
     }
     let ok = 0, fail = 0;
@@ -478,16 +462,43 @@ class PathTrackerPlugin extends Plugin {
         fail++;
       }
     }
-    new Notice(`Folder Path Updater: reverted ${ok}${fail ? ` (${fail} failed)` : ''}.`);
+    this.fpuNotice({
+      status: this.formatRevertStatus('Reverted', ok, fail),
+      paths: this.groupPathsByRename(applied, (e) => e.status === 'reverted'),
+    });
     this.updateRibbon();
     this.settingTab.refreshIfOpen();
+  }
+
+  // Build "Reverted 3" or "Reverted 3 of 5 (2 failed)" header text.
+  formatRevertStatus(verb, ok, fail) {
+    if (fail === 0) return `${verb} ${ok}`;
+    return `${verb} ${ok} of ${ok + fail} (${fail} failed)`;
+  }
+
+  // Group entries by (oldPath, newPath) into path rows with [ok/total] counts.
+  // pred: function that returns true for successful entries.
+  groupPathsByRename(entries, pred) {
+    const groups = new Map();
+    for (const e of entries) {
+      const key = `${e.oldPath}→${e.newPath}`;
+      if (!groups.has(key)) groups.set(key, { oldPath: e.oldPath, newPath: e.newPath, ok: 0, total: 0 });
+      const g = groups.get(key);
+      g.total++;
+      if (pred(e)) g.ok++;
+    }
+    return Array.from(groups.values()).map((g) => ({
+      oldPath: g.oldPath,
+      newPath: g.newPath,
+      count: g.ok === g.total ? (g.total > 1 ? `[${g.total}]` : '') : `[${g.ok}/${g.total}]`,
+    }));
   }
 
   // Inverse of undo: re-write the new value (used to re-apply a reverted entry)
   async reapplyEntry(entry, opts) {
     opts = opts || {};
     if (entry.status !== 'reverted') {
-      if (!opts.silent) new Notice('Only reverted changes can be re-applied.');
+      if (!opts.silent) this.fpuNotice({ status: 'Only reverted changes can be re-applied', timeout: 8000 });
       return;
     }
     try {
@@ -498,16 +509,19 @@ class PathTrackerPlugin extends Plugin {
       await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
       entry.status = 'applied';
       this.settingTab.refreshIfOpen();
-      if (!opts.silent) new Notice(`Re-applied ${this.friendlyLabel(entry)}.`);
+      if (!opts.silent) this.fpuNotice({
+        status: 'Re-applied',
+        paths: [{ oldPath: entry.oldPath, newPath: entry.newPath }],
+      });
     } catch (e) {
-      if (!opts.silent) new Notice(`Re-apply failed: ${e.message}`);
+      if (!opts.silent) this.fpuNotice({ status: `Re-apply failed: ${e.message}`, timeout: 10000 });
     }
   }
 
   async undoEntry(entry, opts) {
     opts = opts || {};
     if (entry.status !== 'applied' || !entry.originalFileContent) {
-      if (!opts.silent) new Notice('Cannot undo: no backup available.');
+      if (!opts.silent) this.fpuNotice({ status: 'Cannot undo (no backup available)', timeout: 8000 });
       return;
     }
     try {
@@ -518,9 +532,12 @@ class PathTrackerPlugin extends Plugin {
       await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
       entry.status = 'reverted';
       this.settingTab.refreshIfOpen();
-      if (!opts.silent) new Notice(`Reverted ${this.friendlyLabel(entry)}.`);
+      if (!opts.silent) this.fpuNotice({
+        status: 'Reverted',
+        paths: [{ oldPath: entry.newPath, newPath: entry.oldPath }],
+      });
     } catch (e) {
-      if (!opts.silent) new Notice(`Undo failed: ${e.message}`);
+      if (!opts.silent) this.fpuNotice({ status: `Undo failed: ${e.message}`, timeout: 10000 });
     }
   }
 
@@ -542,44 +559,100 @@ class PathTrackerPlugin extends Plugin {
     cur[keyPath[keyPath.length - 1]] = value;
   }
 
-  notifySummary(summaryLine, summary, groupKeys) {
+  notifySummary(summary, groupKeys, batch) {
     const needsReload = summary.pluginsNeedingReload && summary.pluginsNeedingReload.size > 0;
-    const n = new Notice('', needsReload ? 15000 : 10000);
-    n.noticeEl.empty();
-    n.noticeEl.addClass('fpu-notice');
-    const title = n.noticeEl.createDiv();
-    title.style.cssText = 'font-weight:600;margin-bottom:2px;';
-    title.setText(`Folder Path Updater: ${summaryLine}`);
-    let subText;
+    let status, subText;
     if (needsReload) {
       const plugins = Array.from(summary.pluginsNeedingReload);
-      let list;
-      if (plugins.length === 1) list = plugins[0];
-      else if (plugins.length === 2) list = `${plugins[0]} and ${plugins[1]}`;
-      else list = `${plugins.slice(0, 2).join(', ')}, and ${plugins.length - 2} other${plugins.length - 2 === 1 ? '' : 's'}`;
-      const verb = plugins.length === 1 ? 'uses' : 'use';
-      subText = `${list} still ${verb} the old path until you reload.`;
+      status = plugins.length === 1
+        ? `${plugins[0]} still uses the old path`
+        : `${plugins.length} plugins still use old paths`;
+      if (plugins.length > 1) subText = plugins.join(', ');
     } else {
-      subText = `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}${summary.failed ? ` (${summary.failed} failed)` : ''}.`;
+      status = `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}`;
+      if (summary.failed) status += ` (${summary.failed} failed)`;
     }
-    n.noticeEl.createDiv({ text: subText });
-    // Buttons row: View (+ Reload Obsidian if a community plugin needs reload)
-    const btns = n.noticeEl.createDiv({ cls: 'fpu-notice-btns' });
-    const view = btns.createEl('button', { text: 'View' });
-    view.onclick = () => {
-      n.hide();
-      const tab = this.settingTab;
-      if (tab && groupKeys) {
-        if (!tab.expandedGroups) tab.expandedGroups = new Set();
-        for (const k of groupKeys) tab.expandedGroups.add(k);
-      }
-      this.app.setting.open();
-      this.app.setting.openTabById('folder-path-updater');
-    };
+    const buttons = [{
+      text: 'View',
+      onClick: () => {
+        const tab = this.settingTab;
+        if (tab && groupKeys) {
+          if (!tab.expandedGroups) tab.expandedGroups = new Set();
+          for (const k of groupKeys) tab.expandedGroups.add(k);
+        }
+        this.app.setting.open();
+        this.app.setting.openTabById('folder-path-updater');
+      },
+    }];
     if (needsReload) {
-      const reload = btns.createEl('button', { text: 'Reload Obsidian', cls: 'mod-cta' });
-      reload.onclick = () => { n.hide(); this.triggerReload(); };
+      buttons.push({ text: 'Reload Obsidian', cta: true, onClick: () => this.triggerReload() });
     }
+    this.fpuNotice({
+      status,
+      paths: (batch || []).map((b) => ({ oldPath: b.oldPath, newPath: b.newPath })),
+      subText,
+      buttons,
+      persistent: needsReload,
+      timeout: 20000,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Unified notice helper.
+  // opts: { status, paths?, subText?, buttons?, persistent?, timeout? }
+  // - paths: array of { oldPath, newPath, count? } rendered as basename pairs
+  //   with full paths in the tooltip; same parent dir collapses to basenames only.
+  // - persistent: if true, timeout = 0 (stays until X clicked or button pressed)
+  // ---------------------------------------------------------------------------
+  fpuNotice(opts) {
+    const timeout = opts.persistent ? 0 : (opts.timeout != null ? opts.timeout : 16000);
+    const n = new Notice('', timeout);
+    n.noticeEl.empty();
+    n.noticeEl.addClass('fpu-notice');
+
+    // Header: status (left) + X dismiss (top-right)
+    const header = n.noticeEl.createDiv({ cls: 'fpu-notice-header' });
+    header.createDiv({ cls: 'fpu-notice-status', text: opts.status || '' });
+    const close = header.createEl('button', { cls: 'fpu-notice-close', text: '×' });
+    close.setAttr('aria-label', 'Dismiss');
+    close.onclick = (e) => {
+      e.stopPropagation();
+      n.hide();
+      if (opts.onDismiss) opts.onDismiss();
+    };
+
+    // Path rows
+    if (opts.paths && opts.paths.length) {
+      const pathsEl = n.noticeEl.createDiv({ cls: 'fpu-notice-paths' });
+      for (const p of opts.paths) {
+        const row = pathsEl.createDiv({ cls: 'fpu-notice-path-row' });
+        const text = row.createSpan({
+          cls: 'fpu-notice-path-text',
+          text: formatPathPair(p.oldPath, p.newPath),
+        });
+        text.setAttr('title', `${p.oldPath}\n  →\n${p.newPath}`);
+        if (p.count) row.createSpan({ cls: 'fpu-notice-path-count', text: p.count });
+      }
+    }
+
+    // Optional plain sub-text (e.g., plugin list when multiple need reload)
+    if (opts.subText) n.noticeEl.createDiv({ cls: 'fpu-notice-subtext', text: opts.subText });
+
+    // Buttons
+    if (opts.buttons && opts.buttons.length) {
+      const btns = n.noticeEl.createDiv({ cls: 'fpu-notice-buttons' });
+      for (const b of opts.buttons) {
+        const btn = btns.createEl('button', { text: b.text });
+        if (b.cta) btn.classList.add('mod-cta');
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          n.hide();
+          if (b.onClick) b.onClick();
+        };
+      }
+    }
+
+    return n;
   }
 
   openPendingModal() {
@@ -648,10 +721,14 @@ class PathTrackerPlugin extends Plugin {
       if (!exists) missing.push(f);
     }
     if (missing.length === 0) {
-      new Notice('Folder Path Updater: every settings path resolves.');
+      this.fpuNotice({ status: 'Every settings path resolves', timeout: 10000 });
       return;
     }
-    new Notice(`Folder Path Updater: ${missing.length} setting${missing.length === 1 ? '' : 's'} point at missing files/folders. See console.`, 8000);
+    this.fpuNotice({
+      status: `${missing.length} setting${missing.length === 1 ? '' : 's'} point at missing files/folders`,
+      subText: 'See developer console for details.',
+      timeout: 16000,
+    });
     console.log('[Folder Path Updater] Broken settings paths:');
     for (const m of missing) {
       console.log(`  ${this.friendlyLabel({ scope: m.source.scope, sourceFile: m.source.path })}: ${humanizeKeyPath(m.keyPath)} = ${JSON.stringify(m.value)}`);
@@ -1190,12 +1267,15 @@ class PathTrackerSettingTab extends PluginSettingTab {
       undoAll.onclick = async (ev) => {
         ev.stopPropagation();
         let ok = 0, fail = 0;
-        for (const e of g.entries) {
-          if (e.status !== 'applied') continue;
+        const targets = g.entries.filter((e) => e.status === 'applied');
+        for (const e of targets) {
           await this.plugin.undoEntry(e, { silent: true });
           if (e.status === 'reverted') ok++; else fail++;
         }
-        new Notice(`Reverted ${ok}${fail ? ` (${fail} failed)` : ''}.`);
+        this.plugin.fpuNotice({
+          status: this.plugin.formatRevertStatus('Reverted', ok, fail),
+          paths: [{ oldPath: g.newPath, newPath: g.oldPath, count: g.entries.length > 1 ? (fail ? `[${ok}/${ok + fail}]` : `[${ok}]`) : '' }],
+        });
         this.display();
       };
     }
@@ -1205,12 +1285,15 @@ class PathTrackerSettingTab extends PluginSettingTab {
       reapply.onclick = async (ev) => {
         ev.stopPropagation();
         let ok = 0, fail = 0;
-        for (const e of g.entries) {
-          if (e.status !== 'reverted') continue;
+        const targets = g.entries.filter((e) => e.status === 'reverted');
+        for (const e of targets) {
           await this.plugin.reapplyEntry(e, { silent: true });
           if (e.status === 'applied') ok++; else fail++;
         }
-        new Notice(`Re-applied ${ok}${fail ? ` (${fail} failed)` : ''}.`);
+        this.plugin.fpuNotice({
+          status: this.plugin.formatRevertStatus('Re-applied', ok, fail),
+          paths: [{ oldPath: g.oldPath, newPath: g.newPath, count: g.entries.length > 1 ? (fail ? `[${ok}/${ok + fail}]` : `[${ok}]`) : '' }],
+        });
         this.display();
       };
     }

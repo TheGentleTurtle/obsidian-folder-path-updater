@@ -953,11 +953,12 @@ class PathTrackerPlugin extends Plugin {
   }
 
   // ---------------------------------------------------------------------------
-  // Unified notice helper.
+  // Notice helper (minimal styling — bold status line, default font everywhere).
   // opts: { status, paths?, subText?, buttons?, persistent?, timeout? }
   // - paths: array of { oldPath, newPath, count? } rendered as basename pairs
-  //   with full paths in the tooltip; same parent dir collapses to basenames only.
-  // - persistent: if true, timeout = 0 (stays until X clicked or button pressed)
+  //   with full paths in the tooltip; same parent dir collapses to basenames.
+  // - persistent: timeout = 0 (stays until a button is clicked or the notice
+  //   body is clicked, which is Obsidian's default dismiss behavior).
   // ---------------------------------------------------------------------------
   fpuNotice(opts) {
     const timeout = opts.persistent ? 0 : (opts.timeout != null ? opts.timeout : 16000);
@@ -965,37 +966,34 @@ class PathTrackerPlugin extends Plugin {
     n.noticeEl.empty();
     n.noticeEl.addClass('fpu-notice');
 
-    // Header: status (left) + X dismiss (top-right)
-    const header = n.noticeEl.createDiv({ cls: 'fpu-notice-header' });
-    header.createDiv({ cls: 'fpu-notice-status', text: opts.status || '' });
-    const close = header.createEl('button', { cls: 'fpu-notice-close', text: '×' });
-    close.setAttr('aria-label', 'Dismiss');
-    close.onclick = (e) => {
-      e.stopPropagation();
-      n.hide();
-      if (opts.onDismiss) opts.onDismiss();
-    };
+    // Bold status line (same as the older notices)
+    const status = n.noticeEl.createDiv();
+    status.style.cssText = 'font-weight:600;margin-bottom:2px;';
+    status.setText(opts.status || '');
 
-    // Path rows
+    // Path rows in default font, with full paths in the tooltip
     if (opts.paths && opts.paths.length) {
-      const pathsEl = n.noticeEl.createDiv({ cls: 'fpu-notice-paths' });
       for (const p of opts.paths) {
-        const row = pathsEl.createDiv({ cls: 'fpu-notice-path-row' });
-        const text = row.createSpan({
-          cls: 'fpu-notice-path-text',
-          text: formatPathPair(p.oldPath, p.newPath),
-        });
+        const row = n.noticeEl.createDiv();
+        const text = row.createSpan({ text: formatPathPair(p.oldPath, p.newPath) });
         text.setAttr('title', `${p.oldPath}\n  →\n${p.newPath}`);
-        if (p.count) row.createSpan({ cls: 'fpu-notice-path-count', text: p.count });
+        if (p.count) {
+          const c = row.createSpan({ text: ' ' + p.count });
+          c.style.cssText = 'opacity:0.7;';
+        }
       }
     }
 
     // Optional plain sub-text (e.g., plugin list when multiple need reload)
-    if (opts.subText) n.noticeEl.createDiv({ cls: 'fpu-notice-subtext', text: opts.subText });
+    if (opts.subText) {
+      const sub = n.noticeEl.createDiv({ text: opts.subText });
+      sub.style.cssText = 'opacity:0.85;margin-top:2px;';
+    }
 
     // Buttons
     if (opts.buttons && opts.buttons.length) {
-      const btns = n.noticeEl.createDiv({ cls: 'fpu-notice-buttons' });
+      const btns = n.noticeEl.createDiv();
+      btns.style.cssText = 'margin-top:8px;display:flex;gap:6px;';
       for (const b of opts.buttons) {
         const btn = btns.createEl('button', { text: b.text });
         if (b.cta) btn.classList.add('mod-cta');

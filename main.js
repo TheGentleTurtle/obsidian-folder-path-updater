@@ -737,27 +737,34 @@ class PathTrackerPlugin extends Plugin {
       this.fpuNotice({ status: 'Nothing applied this session', timeout: 8000 });
       return;
     }
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0, skipped = 0;
     for (const e of applied) {
       try {
-        await this.undoEntry(e, { silent: true });
-        if (e.status === 'reverted') ok++; else fail++;
+        await this.undoEntry(e, { silent: true, onConflict: () => skipped++ });
+        if (e.status === 'reverted') ok++;
+        else if ((e.note || '').includes('manually edited since')) { /* already counted in skipped */ }
+        else fail++;
       } catch (err) {
         fail++;
       }
     }
     this.fpuNotice({
-      status: this.formatRevertStatus('Reverted', ok, fail),
+      status: this.formatRevertStatus('Reverted', ok, fail, skipped),
       paths: this.groupPathsByRename(applied, (e) => e.status === 'reverted'),
     });
     this.updateRibbon();
     this.settingTab.refreshIfOpen();
   }
 
-  // Build "Reverted 3" or "Reverted 3 of 5 (2 failed)" header text.
-  formatRevertStatus(verb, ok, fail) {
-    if (fail === 0) return `${verb} ${ok}`;
-    return `${verb} ${ok} of ${ok + fail} (${fail} failed)`;
+  // Build "Reverted 3" or "Reverted 3 of 5 (2 failed, 1 skipped)" header text.
+  formatRevertStatus(verb, ok, fail, skipped) {
+    skipped = skipped || 0;
+    fail = fail || 0;
+    if (fail === 0 && skipped === 0) return `${verb} ${ok}`;
+    const tail = [];
+    if (fail) tail.push(`${fail} failed`);
+    if (skipped) tail.push(`${skipped} skipped (manually edited)`);
+    return `${verb} ${ok} of ${ok + fail + skipped} (${tail.join(', ')})`;
   }
 
   // Group entries by (oldPath, newPath) into path rows with [ok/total] counts.
@@ -812,6 +819,19 @@ class PathTrackerPlugin extends Plugin {
       if (!opts.silent) this.fpuNotice({ status: 'Only reverted changes can be re-applied', timeout: 8000 });
       return;
     }
+    // Conflict detection: did the user manually edit this field since we reverted it?
+    const current = await this.readCurrentValue(entry);
+    if (current !== undefined && current !== entry.oldValue) {
+      if (opts.silent) {
+        entry.note = (entry.note ? entry.note + '; ' : '') + 'skipped: manually edited since revert';
+        if (opts.onConflict) opts.onConflict(entry);
+        return;
+      }
+      const proceed = window.confirm(
+        `That setting was edited manually since Folder Path Updater last reverted it.\n\nCurrent value:\n  ${JSON.stringify(current)}\n\nRe-apply would replace it with:\n  ${JSON.stringify(entry.newValue)}\n\nProceed and overwrite the manual edit?`
+      );
+      if (!proceed) return;
+    }
     try {
       if (entry.scope === 'frontmatter') {
         const file = this.app.vault.getAbstractFileByPath(entry.sourceFile);
@@ -845,6 +865,20 @@ class PathTrackerPlugin extends Plugin {
     if (entry.status !== 'applied' || !entry.originalFileContent) {
       if (!opts.silent) this.fpuNotice({ status: 'Cannot undo (no backup available)', timeout: 8000 });
       return;
+    }
+    // Conflict detection: did the user manually edit this field since we wrote it?
+    const current = await this.readCurrentValue(entry);
+    if (current !== undefined && current !== entry.newValue) {
+      if (opts.silent) {
+        // Batch operation — skip this entry so we don't clobber manual work
+        entry.note = (entry.note ? entry.note + '; ' : '') + 'skipped: manually edited since apply';
+        if (opts.onConflict) opts.onConflict(entry);
+        return;
+      }
+      const proceed = window.confirm(
+        `That setting was edited manually since Folder Path Updater wrote it.\n\nCurrent value:\n  ${JSON.stringify(current)}\n\nUndo would replace it with:\n  ${JSON.stringify(entry.oldValue)}\n\nProceed and overwrite the manual edit?`
+      );
+      if (!proceed) return;
     }
     try {
       if (entry.scope === 'frontmatter') {
@@ -919,6 +953,36 @@ class PathTrackerPlugin extends Plugin {
     let cur = obj;
     for (let i = 0; i < keyPath.length - 1; i++) cur = cur[keyPath[i]];
     cur[keyPath[keyPath.length - 1]] = value;
+  }
+
+  // Read the value that's CURRENTLY in the source for a given entry. Used to
+  // detect "the user manually edited this field since we wrote it" before we
+  // overwrite their work on undo/reapply.
+  async readCurrentValue(entry) {
+    try {
+      if (entry.scope === 'frontmatter') {
+        const file = this.app.vault.getAbstractFileByPath(entry.sourceFile);
+        if (!file || !(file instanceof TFile)) return undefined;
+        const cache = this.app.metadataCache.getFileCache(file);
+        if (!cache || !cache.frontmatter) return undefined;
+        let cur = cache.frontmatter;
+        for (const k of entry.keyPath) {
+          if (cur == null) return undefined;
+          cur = cur[k];
+        }
+        return cur;
+      }
+      const raw = await this.app.vault.adapter.read(entry.sourceFile);
+      const data = JSON.parse(raw);
+      let cur = data;
+      for (const k of entry.keyPath) {
+        if (cur == null) return undefined;
+        cur = cur[k];
+      }
+      return cur;
+    } catch (e) {
+      return undefined;
+    }
   }
 
   notifySummary(summary, groupKeys, batch) {
@@ -1042,7 +1106,7 @@ class PathTrackerPlugin extends Plugin {
     await new Promise((r) => setTimeout(r, 250));
     const tabContent = document.querySelector('.modal.mod-settings .vertical-tab-content');
     if (!tabContent) return;
-    const targetLabel = humanizeKeyPath(entry.keyPath || []);
+    const targetLabel = humanizeKeyPath(entry.keyPath || [], sourceBasename(entry));
     if (!targetLabel) return;
     const target = findSettingItemByLabel(tabContent, targetLabel);
     if (!target) return;
@@ -1233,7 +1297,7 @@ class PathTrackerPlugin extends Plugin {
     });
     console.log('[Folder Path Updater] Broken settings paths:');
     for (const m of missing) {
-      console.log(`  ${this.friendlyLabel({ scope: m.source.scope, sourceFile: m.source.path })}: ${humanizeKeyPath(m.keyPath)} = ${JSON.stringify(m.value)}`);
+      console.log(`  ${this.friendlyLabel({ scope: m.source.scope, sourceFile: m.source.path })}: ${humanizeKeyPath(m.keyPath, (m.source.path || '').split('/').pop())} = ${JSON.stringify(m.value)}`);
     }
   }
 
@@ -1254,7 +1318,7 @@ class PathTrackerPlugin extends Plugin {
 
   // A one-line, user-readable explanation of where the value lives
   friendlyKeyHint(entry) {
-    return humanizeKeyPath(entry.keyPath || []);
+    return humanizeKeyPath(entry.keyPath || [], sourceBasename(entry));
   }
 
   // Category for the header tag: "Community plugin", "Built-in", etc.
@@ -1266,9 +1330,14 @@ class PathTrackerPlugin extends Plugin {
 
 }
 
+// Resolve the source file basename for context-aware humanization.
+function sourceBasename(entry) {
+  return ((entry && entry.sourceFile) || '').split('/').pop();
+}
+
 // Plain-language title for the row, e.g. "Folder location" or "Bookmark #1"
 function entryTitle(entry) {
-  const key = humanizeKeyPath(entry.keyPath || []);
+  const key = humanizeKeyPath(entry.keyPath || [], sourceBasename(entry));
   return key || 'Path reference';
 }
 
@@ -1318,7 +1387,17 @@ const KEY_OVERRIDES = {
   'newFileFolderPath': 'New note folder',
 };
 
-function humanizeKeyToken(k) {
+// Overrides that only apply when the source file basename matches. Lets us
+// give bookmark items the friendly label "Bookmark" without mislabeling
+// `items` keys in unrelated plugins.
+const SCOPED_KEY_OVERRIDES = {
+  'bookmarks.json': { 'items': 'Bookmark' },
+};
+
+function humanizeKeyToken(k, source) {
+  if (source && SCOPED_KEY_OVERRIDES[source] && SCOPED_KEY_OVERRIDES[source][k]) {
+    return SCOPED_KEY_OVERRIDES[source][k];
+  }
   if (KEY_OVERRIDES[k]) return KEY_OVERRIDES[k];
   // split camelCase, snake_case, kebab-case
   const words = String(k)
@@ -1340,7 +1419,7 @@ function singularize(label) {
   return label;
 }
 
-function humanizeKeyPath(keyPath) {
+function humanizeKeyPath(keyPath, source) {
   if (!keyPath || keyPath.length === 0) return 'value';
   // Find the last string segment and any index that follows it
   let lastStr = null;
@@ -1366,16 +1445,20 @@ function humanizeKeyPath(keyPath) {
     for (let i = lastStrIdx - 1; i >= 0; i--) {
       const seg = keyPath[i];
       if (typeof seg === 'string' && !REDUNDANT_LEAF_KEYS.has(seg)) {
-        return singularize(humanizeKeyToken(seg)) + idxSuffix;
+        // Indices between the parent and the leaf belong with the parent —
+        // e.g., items[0].path → Bookmark #1, not Bookmark.
+        const between = keyPath.slice(i + 1, lastStrIdx).filter((k) => typeof k === 'number');
+        const suffix = between.length ? ' #' + (between[0] + 1) : idxSuffix;
+        return singularize(humanizeKeyToken(seg, source)) + suffix;
       }
     }
     // No parent: fall back to the leaf word
-    return humanizeKeyToken(lastStr) + idxSuffix;
+    return humanizeKeyToken(lastStr, source) + idxSuffix;
   }
 
   // If there is an index suffix, singularize (e.g. "Bookmarks" → "Bookmark")
-  if (idxSuffix) return singularize(humanizeKeyToken(lastStr)) + idxSuffix;
-  return humanizeKeyToken(lastStr);
+  if (idxSuffix) return singularize(humanizeKeyToken(lastStr, source)) + idxSuffix;
+  return humanizeKeyToken(lastStr, source);
 }
 
 // ---------------------------------------------------------------------------
@@ -1856,7 +1939,8 @@ class PathTrackerSettingTab extends PluginSettingTab {
     const caret = sum.createSpan({ cls: `pt-caret ${expanded ? 'open' : ''}` });
     const title = sum.createDiv({ cls: 'path-tracker-history-title' });
     const line1 = title.createDiv({ cls: 'path-tracker-history-rename' });
-    line1.createSpan({ text: `${g.oldPath}  →  ${g.newPath}` });
+    const renameSpan = line1.createSpan({ text: formatPathPair(g.oldPath, g.newPath) });
+    renameSpan.setAttr('title', `${g.oldPath}\n  →\n${g.newPath}`);
     const ts = line1.createSpan({ cls: 'path-tracker-history-ts', text: formatRelativeTime(g.latestTs) });
     ts.title = new Date(g.latestTs).toLocaleString();
     const line2 = title.createDiv({ cls: 'path-tracker-history-status' });
@@ -1878,15 +1962,18 @@ class PathTrackerSettingTab extends PluginSettingTab {
       undoAll.title = 'Revert the changes from this rename.';
       undoAll.onclick = async (ev) => {
         ev.stopPropagation();
-        let ok = 0, fail = 0;
+        let ok = 0, fail = 0, skipped = 0;
         const targets = g.entries.filter((e) => e.status === 'applied');
         for (const e of targets) {
-          await this.plugin.undoEntry(e, { silent: true });
-          if (e.status === 'reverted') ok++; else fail++;
+          await this.plugin.undoEntry(e, { silent: true, onConflict: () => skipped++ });
+          if (e.status === 'reverted') ok++;
+          else if ((e.note || '').includes('manually edited since')) { /* counted */ }
+          else fail++;
         }
+        const total = ok + fail + skipped;
         this.plugin.fpuNotice({
-          status: this.plugin.formatRevertStatus('Reverted', ok, fail),
-          paths: [{ oldPath: g.newPath, newPath: g.oldPath, count: g.entries.length > 1 ? (fail ? `[${ok}/${ok + fail}]` : `[${ok}]`) : '' }],
+          status: this.plugin.formatRevertStatus('Reverted', ok, fail, skipped),
+          paths: [{ oldPath: g.newPath, newPath: g.oldPath, count: total > 1 ? `[${ok}/${total}]` : '' }],
         });
         this.display();
       };
@@ -1896,15 +1983,18 @@ class PathTrackerSettingTab extends PluginSettingTab {
       reapply.title = 'Re-apply the reverted changes.';
       reapply.onclick = async (ev) => {
         ev.stopPropagation();
-        let ok = 0, fail = 0;
+        let ok = 0, fail = 0, skipped = 0;
         const targets = g.entries.filter((e) => e.status === 'reverted');
         for (const e of targets) {
-          await this.plugin.reapplyEntry(e, { silent: true });
-          if (e.status === 'applied') ok++; else fail++;
+          await this.plugin.reapplyEntry(e, { silent: true, onConflict: () => skipped++ });
+          if (e.status === 'applied') ok++;
+          else if ((e.note || '').includes('manually edited since')) { /* counted */ }
+          else fail++;
         }
+        const total = ok + fail + skipped;
         this.plugin.fpuNotice({
-          status: this.plugin.formatRevertStatus('Re-applied', ok, fail),
-          paths: [{ oldPath: g.oldPath, newPath: g.newPath, count: g.entries.length > 1 ? (fail ? `[${ok}/${ok + fail}]` : `[${ok}]`) : '' }],
+          status: this.plugin.formatRevertStatus('Re-applied', ok, fail, skipped),
+          paths: [{ oldPath: g.oldPath, newPath: g.newPath, count: total > 1 ? `[${ok}/${total}]` : '' }],
         });
         this.display();
       };

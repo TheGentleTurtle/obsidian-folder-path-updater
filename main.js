@@ -219,6 +219,13 @@ class PathTrackerPlugin extends Plugin {
       this.renameBatchTimer = null;
     }
     this.renameBatch = [];
+    // Force a final history save if a debounced save was still queued; ignore
+    // errors because the plugin is going away anyway.
+    if (this._historySaveTimer) {
+      window.clearTimeout(this._historySaveTimer);
+      this._historySaveTimer = null;
+      this.saveSettings().catch(() => {});
+    }
   }
 
   async saveSettings() {
@@ -1300,8 +1307,6 @@ function appendStatusPill(parent, status, count) {
 // ---------------------------------------------------------------------------
 const REDUNDANT_LEAF_KEYS = new Set(['file', 'path', 'name', 'value', 'src', 'href', 'url', 'location']);
 const KEY_OVERRIDES = {
-  // bookmarks.json
-  'items': 'Bookmark',
   // daily notes / templates / other core
   'folder': 'Folder',
   'template': 'Template',
@@ -1665,7 +1670,7 @@ class PathTrackerSettingTab extends PluginSettingTab {
 
     const fmSetting = new Setting(containerEl)
       .setName('Frontmatter property allowlist (one per line)')
-      .setDesc('Properties whose value can be rewritten when a folder or file is renamed. Empty by default — add only properties you know hold paths.')
+      .setDesc('Properties whose value can be rewritten when a folder or file is renamed. Empty by default (add only properties you know hold paths).')
       .addTextArea((t) => {
         t.setValue((this.plugin.settings.frontmatterAllowlist || []).join('\n'));
         t.inputEl.rows = 4;

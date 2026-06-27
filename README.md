@@ -13,8 +13,11 @@ When you rename or move your daily notes folder, Obsidian updates `[[wikilinks]]
 - Watches for rename and move events on any folder or file in your vault.
 - Scans Obsidian's core feature settings and every community plugin's `data.json` for references to the old path.
 - Rewrites those references to point at the new path: either silently, with a notification, or only with your approval.
-- Keeps a session history allowing you to view and revert changes.
-- If it's a folder/file path you can edit in **Settings**, this plugin tracks it.
+- Catches **chained renames**: if you skip an `A → B` proposal then rename `B → C`, the plugin notices that settings still say `A` and rewrites them to `C`.
+- Detects **deletions**: when you delete a folder/file that something still references, you get a notice with a **Redirect** button — pick a new target path and the orphan references are rewritten in one go.
+- Optionally scans note **frontmatter properties** for path values (opt-in, with a per-property allowlist).
+- Keeps a persistent **history** of every rename across sessions: the current session is front and centre with one-click Undo per group; previous sessions sit below in a read-only collapsible view.
+- **Undo is full reversal** — clicking Undo rolls the settings back *and* renames the folder/file back to its original name in one click. Same for Re-apply.
 
 ## Modes
 
@@ -28,7 +31,7 @@ Set in the plugin's settings page:
   <img src="assets/settings.png" alt="Folder Path Updater settings: mode dropdown, Ignore paths textarea, History with one Undo entry, and a red Revert everything danger zone" width="820" style="border-radius: 24px;">
 </p>
 
-The settings tab houses these things: how the plugin should behave (mode + an auto-reload toggle + an ignore list), a **History** of every rename it has touched this session with one-click **Undo** per group, and a **Revert everything** button at the bottom for when you want to roll back the whole session in one shot.
+The settings tab houses: the mode dropdown, an auto-reload toggle, a "Notify on every rename" toggle, an opt-in frontmatter scan with its own allowlist, a backup-retention dropdown, and a glob-aware ignore list (`*` for one segment, `**` for any depth). Below the settings is the **History** of every rename — current session up top with per-group Undo / Re-apply, previous sessions below as read-only collapsible cards, and a red **Revert everything** danger button for rolling the whole session back in one shot.
 
 > **Reload affected community plugins** (on by default) makes the plugin disable then re-enable any community plugin whose `data.json` was just edited, so the new path takes effect without restarting Obsidian. Turn it off if you'd rather restart Obsidian yourself.
 
@@ -45,12 +48,13 @@ Before every change, a backup is saved in `.obsidian/plugins/folder-path-updater
 ## What it does **not** cover
 
 - Markdown body content (Obsidian's built-in updater handles `[[wikilinks]]` and `[markdown links](path)`; hardcoded paths inside code blocks or plain text are not touched).
-- Frontmatter properties that store paths.
 - `.canvas`, `.base`, or `.excalidraw` file internals.
 - CSS snippets and themes.
 - Plugin state stored in files other than `data.json`.
 - Renames performed while Obsidian was closed (Finder, Explorer, `git`). Use the **Rewrite a path manually** command for these.
 - Plugin in-memory caches that don't refresh on disable/enable.
+
+*(Frontmatter property values can be scanned when you turn on the dedicated toggle and add property names to the allowlist.)*
 
 ## Installation
 

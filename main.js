@@ -194,6 +194,7 @@ class PathTrackerPlugin extends Plugin {
     this.renameBatchTimer = null;
     this.suppressRenameEvents = false;
     this.selfRenames = new Set(); // JSON [from,to] pairs for renames we caused ourselves
+    this.activeActionNotices = []; // persistent notices tied to live proposals
 
     // Delete events: scan for orphan references; if any, surface a Redirect notice.
     // No notice when zero references — deletes are common and shouldn't be noisy.
@@ -240,6 +241,10 @@ class PathTrackerPlugin extends Plugin {
     }
     this.renameBatch = [];
     if (this.selfRenames) this.selfRenames.clear();
+    for (const rec of this.activeActionNotices || []) {
+      try { rec.n.hide(); } catch (e) { /* already gone */ }
+    }
+    this.activeActionNotices = [];
     // Force a final history save if a debounced save was still queued; ignore
     // errors because the plugin is going away anyway.
     if (this._historySaveTimer) {
@@ -479,13 +484,18 @@ class PathTrackerPlugin extends Plugin {
       const staleDup = (e) =>
         (e.status === 'skipped' || e.status === 'superseded' || e.status === 'pending') &&
         freshKeys.has(`${e.oldPath}→${e.newPath}\u0001${changeKey(e)}`);
-      if (this.session.some(staleDup)) {
-        this.session = this.session.filter((e) => !staleDup(e));
-        this.pending = this.pending.filter((e) => !staleDup(e));
+      const stale = new Set(this.session.filter(staleDup));
+      if (stale.size) {
+        // Mark before removing so any open notice tied to these entries sees
+        // them as resolved and dismisses itself.
+        for (const e of stale) e.status = 'superseded';
+        this.session = this.session.filter((e) => !stale.has(e));
+        this.pending = this.pending.filter((e) => !stale.has(e));
       }
     }
 
     if (proposals.length === 0) {
+      this.refreshActionNotices();
       if (autoCancelled > 0) {
         this.fpuNotice({
           status: 'Already in sync (no action needed).',
@@ -532,12 +542,13 @@ class PathTrackerPlugin extends Plugin {
         this.session.push(p);
       }
       this.settingTab.refreshIfOpen();
-      this.fpuNotice({
+      const n = this.fpuNotice({
         status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} found (no action taken).`,
         paths,
         persistent: true,
         buttons: [{ text: 'View', onClick: openHistoryView }],
       });
+      this.registerActionNotice(n, proposals, ['skipped']);
     } else {
       for (const p of proposals) {
         this.pending.push(p);
@@ -545,21 +556,30 @@ class PathTrackerPlugin extends Plugin {
       }
 
       const places = new Set(proposals.map((p) => this.friendlyLabel(p))).size;
-      this.fpuNotice({
+      const n = this.fpuNotice({
         status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} across ${places} setting${places === 1 ? '' : 's'}.`,
         paths,
         persistent: true,
         buttons: [
           { text: 'Review', onClick: () => this.openPendingModal() },
           { text: 'Apply all', cta: true, onClick: async () => {
-            const summary = await this.applyProposals(proposals);
+            // Only apply what is still pending: a later rename may have
+            // superseded some or all of these while the notice sat open.
+            const live = proposals.filter((p) => p.status === 'pending');
+            if (!live.length) {
+              this.fpuNotice({ status: 'Already handled (nothing left to apply)', timeout: 8000 });
+              return;
+            }
+            const summary = await this.applyProposals(live);
             this.notifySummary(summary, groupKeys, batch);
           }},
         ],
       });
+      this.registerActionNotice(n, proposals, ['pending']);
       this.settingTab.refreshIfOpen();
     }
     this.markHistoryDirty();
+    this.refreshActionNotices();
   }
 
   // ---------------------------------------------------------------------------
@@ -760,6 +780,7 @@ class PathTrackerPlugin extends Plugin {
     }
     this.settingTab.refreshIfOpen();
     this.markHistoryDirty();
+    this.refreshActionNotices();
     return summary;
   }
 
@@ -1212,6 +1233,27 @@ class PathTrackerPlugin extends Plugin {
 
   openPendingModal() {
     new PendingModal(this.app, this).open();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stale-notice housekeeping. A persistent notice acts on specific proposals;
+  // when every one of them gets resolved through some other path (superseded by
+  // a later rename, auto-cancelled by an inverse rename, applied or skipped in
+  // the review modal), the notice dismisses itself instead of lingering with
+  // buttons that would act on dead data.
+  // ---------------------------------------------------------------------------
+  registerActionNotice(n, proposals, aliveStatuses) {
+    this.activeActionNotices.push({ n, proposals, alive: new Set(aliveStatuses || ['pending']) });
+  }
+
+  refreshActionNotices() {
+    this.activeActionNotices = this.activeActionNotices.filter((rec) => {
+      const stillAlive = rec.proposals.some((p) => rec.alive.has(p.status));
+      if (!stillAlive) {
+        try { rec.n.hide(); } catch (e) { /* already gone */ }
+      }
+      return stillAlive;
+    });
   }
 
   // Open the Obsidian settings tab where this entry was applied, then try to
@@ -1742,6 +1784,7 @@ class PendingModal extends Modal {
       }
       this.selected.clear();
       plugin.markHistoryDirty();
+      plugin.refreshActionNotices();
       plugin.settingTab.refreshIfOpen();
       this.render();
     };

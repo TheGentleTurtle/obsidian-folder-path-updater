@@ -60,6 +60,7 @@ Your `daily-notes.json` stores the template without `.md` (e.g. `System/Template
 ## 6. Chain rename
 - [ ] Rename `A → B`, skip it. Rename `B → C`. The plugin finds references to A and offers to rewrite them to C.
 - [ ] The original `A → B` entry shows SUPERSEDED in history.
+- [ ] Rename `A → B` and leave its notice open. Rename `B → C`: the first notice disappears on its own; only the new `A → C` notice remains, and approving it applies the right change.
 
 > Feedback:
 

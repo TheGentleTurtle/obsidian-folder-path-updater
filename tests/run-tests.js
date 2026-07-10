@@ -205,6 +205,34 @@ eq('plugin scope -> plugin id', ctx.tabIdForEntry({ scope: 'plugin:calendar', so
 eq('app.json -> file', ctx.tabIdForEntry({ scope: 'core', sourceFile: '.obsidian/app.json' }), 'file');
 eq('daily-notes.json -> daily-notes', ctx.tabIdForEntry({ scope: 'core', sourceFile: '.obsidian/daily-notes.json' }), 'daily-notes');
 
+// ============================== action-notice housekeeping ==============================
+{
+  const mkNotice = () => ({ hidden: false, hide() { this.hidden = true; } });
+  const host = { activeActionNotices: [] };
+  const reg = proto.registerActionNotice.bind(host);
+  const refresh = proto.refreshActionNotices.bind(host);
+  const p1 = { status: 'pending' }, p2 = { status: 'pending' };
+  const n1 = mkNotice();
+  reg(n1, [p1, p2], ['pending']);
+  refresh();
+  eq('notice stays while proposals pending', n1.hidden, false);
+  p1.status = 'superseded';
+  refresh();
+  eq('notice stays while one proposal still pending', n1.hidden, false);
+  p2.status = 'applied';
+  refresh();
+  eq('notice hides once all proposals resolved elsewhere', n1.hidden, true);
+  eq('resolved notice record pruned', host.activeActionNotices.length, 0);
+  const n2 = mkNotice();
+  const s1 = { status: 'skipped' };
+  reg(n2, [s1], ['skipped']);
+  refresh();
+  eq('notify notice stays while entries skipped', n2.hidden, false);
+  s1.status = 'superseded';
+  refresh();
+  eq('notify notice hides when entries superseded', n2.hidden, true);
+}
+
 // ============================== scanForPaths / setByKeyPath ==============================
 const data = { folder: 'Daily Notes', nested: { list: ['Daily Notes/a.md', 'Other/b.md'] }, tag: 'Daily Notes' };
 const found = scanForPaths(data, 'Daily Notes', 'Daily', true);

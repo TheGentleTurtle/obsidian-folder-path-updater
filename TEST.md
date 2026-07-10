@@ -97,7 +97,9 @@ Your `daily-notes.json` stores the template without `.md` (e.g. `System/Template
 
 ## 10. History
 - [ ] Each rename is a card: name on top, one plain sentence under it like `3 settings updated · 2m ago`. No pill row, no monospace. (New look.)
-- [ ] Expand a card: rows show the setting name and a red/green diff in the normal font. The card's single Undo / Re-apply button does the work (per-row buttons are gone).
+- [ ] Expand a card: each row reads like the actual settings field, label left and red/green diff right on one line. For Daily Notes the row says **New file location** (not "Folder"); Templates says **Template folder location**; attachments say **Default location for new attachments**.
+- [ ] No duplicate rows: rename a folder, revert it, rename it again the same way — the card shows each change once, not stacked copies.
+- [ ] The card's single Undo / Re-apply button does the work (per-row buttons are gone).
 - [ ] A pill only appears on a row when its result differs from the rest (e.g. one skipped among applied).
 - [ ] Click **↗** on a row. The right settings tab opens and the field briefly highlights. Also try it on a Bookmarks entry and tell me what happens (Bookmarks has no settings tab; I could not verify this from code).
 - [ ] Click **↗** on a frontmatter row. The note opens.

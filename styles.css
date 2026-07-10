@@ -324,31 +324,43 @@ button.fpu-goto-btn:hover {
   border-top: 1px solid var(--background-modifier-border);
 }
 
-/* ========== Single change line ========== */
+/* ========== Single change line (settings-style: label left, change right) ========== */
 .path-tracker-line {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 0;
-  border-bottom: 1px dashed var(--background-modifier-border);
-}
-.path-tracker-line:last-child { border-bottom: none; }
-.path-tracker-line-top {
-  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--size-4-2);
   flex-wrap: wrap;
+  padding: var(--size-2-3) 0;
+}
+.path-tracker-line + .path-tracker-line {
+  border-top: 1px solid var(--background-modifier-border);
 }
 .path-tracker-line-what {
   font-size: 0.85em;
   color: var(--text-muted);
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-3);
 }
-.path-tracker-line-top .fpu-goto-btn { margin-left: auto; }
+.path-tracker-line-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--size-2-3);
+  margin-left: auto;
+  min-width: 0;
+  flex-wrap: wrap;
+}
 .path-tracker-line-diff {
   font-size: 0.88em;
   word-break: break-word;
-  padding-left: 0;
+  text-align: right;
+}
+/* In the pending modal the diff is a direct child of the line; push it right
+   so both surfaces share the same label-left / change-right shape. */
+.path-tracker-line > .path-tracker-line-diff {
+  margin-left: auto;
 }
 .path-tracker-line-diff .pt-d-eq  { color: var(--text-normal); }
 .path-tracker-line-diff .pt-d-del { color: var(--text-error); text-decoration: line-through; background: rgba(255,80,80,0.15); padding: 0 2px; border-radius: 2px; }

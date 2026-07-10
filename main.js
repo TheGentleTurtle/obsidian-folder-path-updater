@@ -130,6 +130,14 @@ function formatPathPair(oldPath, newPath, quoted) {
   return `${from} → ${to}`;
 }
 
+// Stable identity for "the same concrete change": same file, same key, same
+// value rewrite. Used to collapse duplicate proposals within a batch and to
+// let a fresh proposal replace a stale (never-applied) copy of itself in
+// history, so repeating a rename doesn't stack identical rows.
+function changeKey(e) {
+  return [e.sourceFile, JSON.stringify(e.keyPath), String(e.oldValue), String(e.newValue)].join('\u0001');
+}
+
 class PathTrackerPlugin extends Plugin {
   async onload() {
     const data = (await this.loadData()) || {};
@@ -318,6 +326,18 @@ class PathTrackerPlugin extends Plugin {
       }
     }
     if (chainedExtras.length) batch = batch.concat(chainedExtras);
+
+    // Collapse duplicate rename pairs. Repeated events inside one batch window
+    // or a chain resolving to an already-present pair would otherwise produce
+    // two identical proposals for every matching setting.
+    const seenPairs = new Set();
+    batch = batch.filter((b) => {
+      const k = `${b.oldPath}→${b.newPath}`;
+      if (seenPairs.has(k)) return false;
+      seenPairs.add(k);
+      return true;
+    });
+
     // Mark superseded chain-source entries so they don't haunt the history.
     if (supersededByChain.size) {
       for (const e of this.session) {
@@ -424,6 +444,34 @@ class PathTrackerPlugin extends Plugin {
             stringMatches(value, [key]);
           }
         }
+      }
+    }
+
+    // Collapse duplicate proposals (same file, same key, same value change).
+    {
+      const seenChanges = new Set();
+      const unique = proposals.filter((p) => {
+        const k = changeKey(p);
+        if (seenChanges.has(k)) return false;
+        seenChanges.add(k);
+        return true;
+      });
+      proposals.length = 0;
+      Array.prototype.push.apply(proposals, unique);
+    }
+
+    // Replace rule: a fresh proposal supersedes any earlier copy of the SAME
+    // change that never got applied (skipped, superseded, or still pending).
+    // Without this, renaming A→B, reverting, then renaming A→B again stacks
+    // identical rows under one history card.
+    if (proposals.length) {
+      const freshKeys = new Set(proposals.map((p) => `${p.oldPath}→${p.newPath}\u0001${changeKey(p)}`));
+      const staleDup = (e) =>
+        (e.status === 'skipped' || e.status === 'superseded' || e.status === 'pending') &&
+        freshKeys.has(`${e.oldPath}→${e.newPath}\u0001${changeKey(e)}`);
+      if (this.session.some(staleDup)) {
+        this.session = this.session.filter((e) => !staleDup(e));
+        this.pending = this.pending.filter((e) => !staleDup(e));
       }
     }
 
@@ -1457,11 +1505,35 @@ const KEY_OVERRIDES = {
   'newFileFolderPath': 'New note folder',
 };
 
-// Overrides that only apply when the source file basename matches. Lets us
-// give bookmark items the friendly label "Bookmark" without mislabeling
-// `items` keys in unrelated plugins.
+// Overrides that only apply when the source file basename matches. Two jobs:
+// 1. Keep generic key names from mislabeling (bookmarks' `items`).
+// 2. Make history rows read like the EXACT setting the user edits in the
+//    Obsidian settings UI ("New file location" instead of "Folder"), so a row
+//    is instantly recognizable as the field it changed.
+// Community plugins fall through to the generic de-camelCase humanizer since
+// their display labels can't be known statically.
 const SCOPED_KEY_OVERRIDES = {
   'bookmarks.json': { 'items': 'Bookmark' },
+  'daily-notes.json': {
+    'folder': 'New file location',
+    'template': 'Template file location',
+    'format': 'Date format',
+  },
+  'templates.json': {
+    'folder': 'Template folder location',
+  },
+  'zk-prefixer.json': {
+    'folder': 'New file location',
+    'template': 'Template file location',
+  },
+  'note-composer.json': {
+    'template': 'Template file location',
+  },
+  'app.json': {
+    'attachmentFolderPath': 'Default location for new attachments',
+    'newFileFolderPath': 'Folder to create new notes in',
+    'userIgnoreFilters': 'Excluded files',
+  },
 };
 
 function humanizeKeyToken(k, source) {
@@ -2110,26 +2182,38 @@ class PathTrackerSettingTab extends PluginSettingTab {
         if (!bySource.has(k)) bySource.set(k, []);
         bySource.get(k).push(e);
       }
+      // Collapse visually identical rows (same key, values, and status).
+      // History persisted before the generation-time dedupe (v0.1.12) can
+      // still contain doubles; this keeps them from rendering.
+      const seenRows = new Set();
       for (const [label, entries] of bySource) {
+        const rows = entries.filter((e) => {
+          const rowKey = `${changeKey(e)}\u0001${e.status}`;
+          if (seenRows.has(rowKey)) return false;
+          seenRows.add(rowKey);
+          return true;
+        });
+        if (!rows.length) continue;
         const block = body.createDiv({ cls: 'path-tracker-history-block' });
         const heading = block.createDiv({ cls: 'path-tracker-history-block-head' });
         heading.createSpan({ text: label });
-        appendCategoryPill(heading, this.plugin.categoryFor(entries[0]));
-        for (const e of entries) {
+        appendCategoryPill(heading, this.plugin.categoryFor(rows[0]));
+        for (const e of rows) {
+          // Settings-style row: label on the left, change on the right
           const line = block.createDiv({ cls: 'path-tracker-line' });
-          const top = line.createDiv({ cls: 'path-tracker-line-top' });
-          top.createSpan({ cls: 'path-tracker-line-what', text: entryTitle(e) });
+          const what = line.createDiv({ cls: 'path-tracker-line-what' });
+          what.createSpan({ text: entryTitle(e) });
           if (e.status && e.status !== dominant) {
-            appendStatusPill(top, e.status);
+            appendStatusPill(what, e.status);
           }
-          // Small "open in settings" arrow
-          const goto = top.createEl('button', { cls: 'fpu-goto-btn', text: '↗' });
+          const right = line.createDiv({ cls: 'path-tracker-line-right' });
+          const diff = right.createDiv({ cls: 'path-tracker-line-diff' });
+          diff.title = `${e.oldValue}\n→\n${e.newValue}`;
+          renderInlineDiff(diff, e.oldValue, e.newValue);
+          const goto = right.createEl('button', { cls: 'fpu-goto-btn', text: '↗' });
           goto.setAttr('aria-label', 'Open the related setting');
           goto.title = 'Open the related setting';
           goto.onclick = () => this.plugin.openSettingsForEntry(e);
-          const diff = line.createDiv({ cls: 'path-tracker-line-diff' });
-          diff.title = `${e.oldValue}\n→\n${e.newValue}`;
-          renderInlineDiff(diff, e.oldValue, e.newValue);
         }
       }
     }

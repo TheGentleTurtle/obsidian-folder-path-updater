@@ -45,6 +45,7 @@ for (const p of [
   'const SCOPED_KEY_OVERRIDES',
   'function globToRegex',
   'function formatPathPair',
+  'function changeKey',
   'function humanizeKeyToken',
   'function singularize',
   'function humanizeKeyPath',
@@ -142,9 +143,19 @@ eq('bookmarks items[0].path scoped', h(['items', 0, 'path'], 'bookmarks.json'), 
 eq('other plugin items[0].path', h(['items', 0, 'path'], 'data.json'), 'Item #1');
 eq('items[2] direct', h(['items', 2], 'bookmarks.json'), 'Bookmark #3');
 eq('nested bookmarks group uses inner index', h(['items', 1, 'items', 3, 'path'], 'bookmarks.json'), 'Bookmark #4');
-eq('folder key override', h(['folder'], 'daily-notes.json'), 'Folder');
-eq('template key', h(['template'], 'daily-notes.json'), 'Template');
-eq('attachmentFolderPath', h(['attachmentFolderPath'], 'app.json'), 'Attachment folder');
+// Core files use the EXACT labels from Obsidian's settings UI
+eq('daily-notes folder = settings label', h(['folder'], 'daily-notes.json'), 'New file location');
+eq('daily-notes template = settings label', h(['template'], 'daily-notes.json'), 'Template file location');
+eq('daily-notes format = settings label', h(['format'], 'daily-notes.json'), 'Date format');
+eq('templates folder = settings label', h(['folder'], 'templates.json'), 'Template folder location');
+eq('zk-prefixer folder = settings label', h(['folder'], 'zk-prefixer.json'), 'New file location');
+eq('app attachments = settings label', h(['attachmentFolderPath'], 'app.json'), 'Default location for new attachments');
+eq('app new-note folder = settings label', h(['newFileFolderPath'], 'app.json'), 'Folder to create new notes in');
+eq('app excluded files array', h(['userIgnoreFilters', 0], 'app.json'), 'Excluded file #1');
+// Community plugins keep the generic humanizer
+eq('community folder stays generic', h(['folder'], 'data.json'), 'Folder');
+eq('community template stays generic', h(['template'], 'data.json'), 'Template');
+eq('community attachmentFolderPath generic', h(['attachmentFolderPath'], 'data.json'), 'Attachment folder');
 eq('camelCase split (sentence case)', h(['recentFiles', 0, 'path'], 'data.json'), 'Recent file #1');
 eq('redundant leaf falls back to parent', h(['templates', 'path'], 'data.json'), 'Template');
 eq('all-numeric path', h([0], 'data.json'), 'Item #1');
@@ -154,6 +165,14 @@ eq('singularize ies', ctx.singularize('Categories'), 'Category');
 eq('singularize plain s', ctx.singularize('Notes'), 'Note');
 eq('no singularize ss', ctx.singularize('Address'), 'Address');
 eq('singularize ses', ctx.singularize('Statuses'), 'Status');
+
+// ============================== changeKey ==============================
+const e1 = { sourceFile: 'a.json', keyPath: ['folder'], oldValue: 'A', newValue: 'B' };
+eq('changeKey equal for identical changes', ctx.changeKey(e1) === ctx.changeKey({ ...e1 }), true);
+eq('changeKey differs by keyPath', ctx.changeKey(e1) === ctx.changeKey({ ...e1, keyPath: ['template'] }), false);
+eq('changeKey differs by file', ctx.changeKey(e1) === ctx.changeKey({ ...e1, sourceFile: 'b.json' }), false);
+eq('changeKey differs by value', ctx.changeKey(e1) === ctx.changeKey({ ...e1, newValue: 'C' }), false);
+eq('changeKey no ambiguity across fields', ctx.changeKey({ ...e1, oldValue: 'A1', newValue: '' }) === ctx.changeKey({ ...e1, oldValue: 'A', newValue: '1' }), false);
 
 // ============================== statusSentence ==============================
 const zero = { applied: 0, skipped: 0, reverted: 0, failed: 0, pending: 0, superseded: 0 };

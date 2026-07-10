@@ -25,7 +25,8 @@ Folder Path Updater, an Obsidian community plugin. It watches vault rename/move/
 
 ## Behavior invariants (user-approved contracts)
 
-- Matching (`matchPath`): folder-prefix matches need the `/` boundary (`Daily` must not match `Daily Notes/x`); exact matches require a path-like key name or a slash in the value; extensionless values (`template: "Templates/Daily"`) update when `Templates/Daily.md` is renamed; a folder rename never rewrites a reference to a same-named `.md` file.
+- Matching (`matchPath`): folder-prefix matches need the `/` boundary (`Daily` must not match `Daily Notes/x`); exact matches require a path-like key name or a slash in the value; extensionless values (`template: "Templates/Daily"`) update when `Templates/Daily.md` is renamed; a folder rename never rewrites a reference to a same-named `.md` file. Comparisons are case-insensitive and tolerate a leading `/` or `./` and a trailing `/` typed into settings values (vault paths are case-insensitive on macOS/Windows); rewrites preserve the user's decorations.
+- Renames the plugin performs itself (undo/re-apply restoring a name) are recorded in `selfRenames` before calling `fileManager.renameFile` and consumed by the rename handler, so they never re-enter the pipeline regardless of event timing.
 - Modes: default `manual` ("Ask me each time"); Notify mode never writes anything, including redirects.
 - Undo/Re-apply is full reversal (settings + rename the folder/file back) for direct rename entries only; entries with `origin` of `chain`, `manual`, or `redirect` restore settings values only.
 - "Revert everything" and per-group Undo operate on the current session only; past sessions are read-only history (30-day window, 1000-entry cap, persisted in `data.json` under `_history`).

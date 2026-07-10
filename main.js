@@ -193,6 +193,7 @@ class PathTrackerPlugin extends Plugin {
     this.renameBatch = [];
     this.renameBatchTimer = null;
     this.suppressRenameEvents = false;
+    this.selfRenames = new Set(); // JSON [from,to] pairs for renames we caused ourselves
 
     // Delete events: scan for orphan references; if any, surface a Redirect notice.
     // No notice when zero references — deletes are common and shouldn't be noisy.
@@ -204,8 +205,16 @@ class PathTrackerPlugin extends Plugin {
     }));
 
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
-      if (this.suppressRenameEvents) return; // we triggered this rename ourselves (undo/reapply)
       if (!oldPath || !file || oldPath === file.path) return;
+      // Renames we performed ourselves (undo / re-apply restoring a folder
+      // name) are recorded before the call and consumed here, so they never
+      // re-enter the pipeline no matter how late Obsidian delivers the event.
+      const selfKey = JSON.stringify([oldPath, file.path]);
+      if (this.selfRenames.has(selfKey)) {
+        this.selfRenames.delete(selfKey);
+        return;
+      }
+      if (this.suppressRenameEvents) return; // secondary guard for stragglers
       this.renameBatch.push({ file, oldPath, newPath: file.path, isFolder: file instanceof TFolder });
       if (this.renameBatchTimer) window.clearTimeout(this.renameBatchTimer);
       this.renameBatchTimer = window.setTimeout(() => {
@@ -230,6 +239,7 @@ class PathTrackerPlugin extends Plugin {
       this.renameBatchTimer = null;
     }
     this.renameBatch = [];
+    if (this.selfRenames) this.selfRenames.clear();
     // Force a final history save if a debounced save was still queued; ignore
     // errors because the plugin is going away anyway.
     if (this._historySaveTimer) {
@@ -620,27 +630,45 @@ class PathTrackerPlugin extends Plugin {
     if (!value || typeof value !== 'string') return null;
 
     const keyLooksLikePath = keyName && PATH_KEY_RE.test(keyName);
-    const valueHasSlash = value.includes('/');
+
+    // Users type cosmetic variants into settings fields: a leading "/" or
+    // "./", a trailing "/", or different casing (vault paths are
+    // case-insensitive on macOS and Windows). Strip the decorations for the
+    // comparison, remember them, and restore them around the rewritten value
+    // so the user's formatting survives the update.
+    let lead = '';
+    let core = value;
+    for (;;) {
+      if (core.startsWith('./')) { lead += './'; core = core.slice(2); continue; }
+      if (core.startsWith('/')) { lead += '/'; core = core.slice(1); continue; }
+      break;
+    }
+    let trail = '';
+    while (core.endsWith('/') && core.length > 1) { trail += '/'; core = core.slice(0, -1); }
+    const coreLC = core.toLowerCase();
+    const oldLC = String(oldPath).toLowerCase();
+    // A slash anywhere (including stripped decorations) marks the value as path-like
+    const valueHasSlash = core.includes('/') || lead.includes('/') || trail.includes('/');
 
     // Prefix match under a folder — always safe (the slash makes it unambiguous)
-    if (isFolder && value.startsWith(oldPath + '/')) {
-      return { newValue: newPath + value.slice(oldPath.length), kind: 'prefix' };
+    if (isFolder && coreLC.startsWith(oldLC + '/')) {
+      return { newValue: lead + newPath + core.slice(oldPath.length) + trail, kind: 'prefix' };
     }
     // Exact match — only if the field name OR the value itself signals "path"
-    if (value === oldPath && (keyLooksLikePath || valueHasSlash)) {
-      return { newValue: newPath, kind: 'exact' };
+    if (coreLC === oldLC && (keyLooksLikePath || valueHasSlash)) {
+      return { newValue: lead + newPath + trail, kind: 'exact' };
     }
     // Extensionless reference to a renamed .md file. Core plugins (Daily Notes,
     // unique-note creator) store template paths without the extension, so
     // renaming "Templates/Daily.md" must also update a value "Templates/Daily".
-    if (!isFolder && value + '.md' === oldPath && newPath.endsWith('.md') && (keyLooksLikePath || valueHasSlash)) {
-      return { newValue: newPath.slice(0, -3), kind: 'exact' };
+    if (!isFolder && coreLC + '.md' === oldLC && newPath.endsWith('.md') && (keyLooksLikePath || valueHasSlash)) {
+      return { newValue: lead + newPath.slice(0, -3) + trail, kind: 'exact' };
     }
     // The reverse: the value stores the extension but the old path was given
     // without it (manual rewrites). Never for folder renames — a folder "X"
     // and a file "X.md" are different things.
-    if (!isFolder && value === oldPath + '.md' && (keyLooksLikePath || valueHasSlash)) {
-      return { newValue: newPath + '.md', kind: 'exact' };
+    if (!isFolder && coreLC === oldLC + '.md' && (keyLooksLikePath || valueHasSlash)) {
+      return { newValue: lead + newPath + '.md' + trail, kind: 'exact' };
     }
     return null;
   }
@@ -866,16 +894,21 @@ class PathTrackerPlugin extends Plugin {
       this.fpuNotice({ status: `Cannot restore '${to}' (path already exists)`, timeout: 12000 });
       return { skipped: true, collision: true };
     }
+    // Record the expected rename BEFORE performing it: the event handler
+    // consumes the pair whenever it arrives, so our own rename never gets
+    // treated as a user action even if Obsidian delivers the event late.
+    const selfKey = JSON.stringify([from, to]);
+    this.selfRenames.add(selfKey);
     this.suppressRenameEvents = true;
     try {
       await this.app.fileManager.renameFile(file, to);
     } catch (e) {
       console.warn('[Folder Path Updater] rename-back failed:', e);
+      this.selfRenames.delete(selfKey);
       this.suppressRenameEvents = false;
       return { skipped: true, error: e.message };
     }
-    // Clear the suppression flag on the next tick so any deferred rename
-    // event has a chance to fire while it's still set.
+    // Keep the flag up briefly as a secondary guard for descendant events.
     await new Promise((r) => setTimeout(r, 50));
     this.suppressRenameEvents = false;
     return { renamed: true };

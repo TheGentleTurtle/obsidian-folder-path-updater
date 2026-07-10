@@ -107,6 +107,23 @@ eq('unicode path prefix', matchPath('📁 Notes/x.md', '📁 Notes', '📂 N', t
   { newValue: '📂 N/x.md', kind: 'prefix' });
 eq('regex-special chars in path', matchPath('A (1)/x.md', 'A (1)', 'B+', true, 'folder'),
   { newValue: 'B+/x.md', kind: 'prefix' });
+// Cosmetic tolerance: users type case variants, leading "/" or "./", trailing "/"
+eq('case-insensitive exact match',
+  matchPath('02 daily notes', '02 Daily Notes', 'daily', true, 'folder'), { newValue: 'daily', kind: 'exact' });
+eq('case-insensitive prefix match',
+  matchPath('02 DAILY NOTES/x.md', '02 Daily Notes', 'daily', true, 'file'), { newValue: 'daily/x.md', kind: 'prefix' });
+eq('trailing slash tolerated and preserved',
+  matchPath('02 Daily Notes/', '02 Daily Notes', 'daily', true, 'folder'), { newValue: 'daily/', kind: 'exact' });
+eq('leading slash tolerated and preserved',
+  matchPath('/02 Daily Notes', '02 Daily Notes', 'daily', true, 'folder'), { newValue: '/daily', kind: 'exact' });
+eq('leading ./ tolerated and preserved',
+  matchPath('./02 Daily Notes', '02 Daily Notes', 'daily', true, 'folder'), { newValue: './daily', kind: 'exact' });
+eq('case tolerance is not fuzzy matching',
+  matchPath('02 Daily Notes Extra', '02 Daily Notes', 'daily', true, 'folder'), null);
+eq('case-insensitive boundary still enforced',
+  matchPath('02 DAILY NOTESX/a.md', '02 Daily Notes', 'daily', true, 'folder'), null);
+eq('slash-decorated value counts as path-like even with generic key',
+  matchPath('Notes/', 'Notes', 'N2', true, 'category'), { newValue: 'N2/', kind: 'exact' });
 
 // ============================== globToRegex ==============================
 const g = (pat, s) => { const re = ctx.globToRegex(pat); return re ? re.test(s) : null; };

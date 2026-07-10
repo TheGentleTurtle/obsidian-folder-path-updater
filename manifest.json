@@ -1,7 +1,7 @@
 {
   "id": "folder-path-updater",
   "name": "Folder Path Updater",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "minAppVersion": "1.4.0",
   "description": "Automatically updates folder and file path references across core settings and community plugin data when you rename or move things.",
   "author": "TheGentleTurtle",

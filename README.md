@@ -29,7 +29,7 @@ Set in the plugin's settings page:
 - **Notify (no action taken):** finds matches, logs them to history, shows a notification with a *View* button to view the log. Nothing is changed; you can still apply later from history if you want.
 
 <p align="center">
-  <img src="assets/settings.png" alt="Folder Path Updater settings: mode dropdown, Ignore paths textarea, History with one Undo entry, and a red Revert everything danger zone" width="820" style="border-radius: 24px;">
+  <img src="assets/settings.png" alt="Folder Path Updater settings: mode dropdown, reload and notify toggles, frontmatter allowlist, backup retention, Ignore paths, History with an Undo entry, and a red Revert everything danger zone" width="820" style="border-radius: 24px;">
 </p>
 
 The settings tab houses: the mode dropdown, an auto-reload toggle, a "Notify on every rename" toggle, an opt-in frontmatter scan with its own allowlist, a backup-retention dropdown, and a glob-aware ignore list (`*` for one segment, `**` for any depth). Below the settings is the **History** of every rename: current session up top with per-group Undo / Re-apply, previous sessions below as read-only collapsible cards, and a red **Revert everything** danger button for rolling the whole session back in one shot.

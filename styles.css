@@ -183,6 +183,32 @@ button.fpu-goto-btn:hover {
   padding: 6px 16px;
 }
 
+/* ========== Confirmation modal ========== */
+.fpu-confirm-line {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0;
+  font-size: 0.88em;
+}
+.fpu-confirm-line-label {
+  color: var(--text-muted);
+  min-width: 110px;
+  flex-shrink: 0;
+}
+.fpu-confirm-line-value {
+  font-family: var(--font-monospace);
+  word-break: break-all;
+}
+.fpu-confirm-buttons {
+  margin-top: 16px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.fpu-confirm-buttons button {
+  padding: 6px 16px;
+}
+
 /* ========== Highlight pulse on the targeted setting field ========== */
 .fpu-setting-highlight {
   outline: 2px solid var(--interactive-accent);

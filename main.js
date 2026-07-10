@@ -1,7 +1,7 @@
 'use strict';
 
 const obsidian = require('obsidian');
-const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFolder, TFile, normalizePath } = obsidian;
+const { Plugin, PluginSettingTab, Setting, Notice, Modal, Menu, TFolder, TFile, normalizePath, parseYaml } = obsidian;
 // AbstractInputSuggest may not exist in very old Obsidian builds; fall back gracefully.
 const AbstractInputSuggest = obsidian.AbstractInputSuggest || null;
 
@@ -259,8 +259,6 @@ class PathTrackerPlugin extends Plugin {
     }, 800);
   }
 
-  updateRibbon() { /* ribbon removed — kept as a no-op so existing call sites are harmless */ }
-
   // ---------------------------------------------------------------------------
   // Rename batch handler — coalesces all renames in a short window into ONE notification
   // ---------------------------------------------------------------------------
@@ -345,7 +343,6 @@ class PathTrackerPlugin extends Plugin {
         cancelledLabels.push(this.friendlyLabel(p));
       }
     }
-    if (autoCancelled > 0) this.updateRibbon();
 
     const targets = await this.collectTargets();
     const proposals = [];
@@ -377,6 +374,7 @@ class PathTrackerPlugin extends Plugin {
             status: 'pending',
             originalFileContent: null,
             sessionId: this.currentSessionId,
+            origin: b.chained ? 'chain' : (b.manual ? 'manual' : 'rename'),
           });
         }
       }
@@ -413,6 +411,7 @@ class PathTrackerPlugin extends Plugin {
                 status: 'pending',
                 originalFileContent: null,
                 sessionId: this.currentSessionId,
+                origin: b.chained ? 'chain' : (b.manual ? 'manual' : 'rename'),
               });
             }
           };
@@ -434,11 +433,18 @@ class PathTrackerPlugin extends Plugin {
         });
         this.settingTab.refreshIfOpen();
       } else if (this.settings.notifyOnNoChanges) {
-        this.fpuNotice({
-          status: '0 references to update',
-          paths: batch.map((b) => ({ oldPath: b.oldPath, newPath: b.newPath })),
-          timeout: 10000,
-        });
+        // Peace-of-mind notice for folder renames (and explicit manual
+        // rewrites, which deserve a response either way). File renames happen
+        // constantly (every note title edit), so they stay silent unless
+        // something actually references the file.
+        const notable = batch.filter((b) => b.isFolder || b.manual);
+        if (notable.length) {
+          this.fpuNotice({
+            status: '0 references to update',
+            paths: notable.map((b) => ({ oldPath: b.oldPath, newPath: b.newPath })),
+            timeout: 10000,
+          });
+        }
       }
       return;
     }
@@ -476,7 +482,6 @@ class PathTrackerPlugin extends Plugin {
         this.pending.push(p);
         this.session.push(p);
       }
-      this.updateRibbon();
 
       const places = new Set(proposals.map((p) => this.friendlyLabel(p))).size;
       this.fpuNotice({
@@ -574,8 +579,16 @@ class PathTrackerPlugin extends Plugin {
     if (value === oldPath && (keyLooksLikePath || valueHasSlash)) {
       return { newValue: newPath, kind: 'exact' };
     }
-    // "<oldPath>.md" — same gating
-    if (value === oldPath + '.md' && (keyLooksLikePath || valueHasSlash)) {
+    // Extensionless reference to a renamed .md file. Core plugins (Daily Notes,
+    // unique-note creator) store template paths without the extension, so
+    // renaming "Templates/Daily.md" must also update a value "Templates/Daily".
+    if (!isFolder && value + '.md' === oldPath && newPath.endsWith('.md') && (keyLooksLikePath || valueHasSlash)) {
+      return { newValue: newPath.slice(0, -3), kind: 'exact' };
+    }
+    // The reverse: the value stores the extension but the old path was given
+    // without it (manual rewrites). Never for folder renames — a folder "X"
+    // and a file "X.md" are different things.
+    if (!isFolder && value === oldPath + '.md' && (keyLooksLikePath || valueHasSlash)) {
       return { newValue: newPath + '.md', kind: 'exact' };
     }
     return null;
@@ -666,7 +679,6 @@ class PathTrackerPlugin extends Plugin {
       p.sessionId = p.sessionId || this.currentSessionId;
       if (!this.session.includes(p)) this.session.push(p);
     }
-    this.updateRibbon();
     this.settingTab.refreshIfOpen();
     this.markHistoryDirty();
     return summary;
@@ -728,11 +740,16 @@ class PathTrackerPlugin extends Plugin {
     this.fpuNotice({
       status: this.formatRevertStatus('Applied', summary.applied, summary.failed),
       paths: this.groupPathsByRename(items, (e) => e.status === 'applied'),
+      persistent: summary.failed > 0,
     });
   }
 
   async revertAllSession() {
-    const applied = this.session.filter((e) => e.status === 'applied');
+    // Current session only: past-session entries are read-only history.
+    const sid = this.currentSessionId;
+    const applied = this.session.filter(
+      (e) => e.status === 'applied' && (e.sessionId || sid) === sid
+    );
     if (applied.length === 0) {
       this.fpuNotice({ status: 'Nothing applied this session', timeout: 8000 });
       return;
@@ -751,8 +768,8 @@ class PathTrackerPlugin extends Plugin {
     this.fpuNotice({
       status: this.formatRevertStatus('Reverted', ok, fail, skipped),
       paths: this.groupPathsByRename(applied, (e) => e.status === 'reverted'),
+      persistent: fail > 0 || skipped > 0,
     });
-    this.updateRibbon();
     this.settingTab.refreshIfOpen();
   }
 
@@ -827,9 +844,16 @@ class PathTrackerPlugin extends Plugin {
         if (opts.onConflict) opts.onConflict(entry);
         return;
       }
-      const proceed = window.confirm(
-        `That setting was edited manually since Folder Path Updater last reverted it.\n\nCurrent value:\n  ${JSON.stringify(current)}\n\nRe-apply would replace it with:\n  ${JSON.stringify(entry.newValue)}\n\nProceed and overwrite the manual edit?`
-      );
+      const proceed = await ConfirmModal.ask(this.app, {
+        title: 'Overwrite manual edit?',
+        body: 'This setting was edited manually since Folder Path Updater last reverted it.',
+        lines: [
+          { label: 'Current value', value: String(current) },
+          { label: 'Re-apply writes', value: String(entry.newValue) },
+        ],
+        confirmText: 'Overwrite',
+        destructive: true,
+      });
       if (!proceed) return;
     }
     try {
@@ -847,8 +871,13 @@ class PathTrackerPlugin extends Plugin {
         await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
       }
       entry.status = 'applied';
-      // Also rename the folder/file forward (once per group; subsequent calls no-op)
-      await this.maybeRenameVaultPath(entry.oldPath, entry.newPath);
+      // Also rename the folder/file forward (once per group; subsequent calls
+      // no-op). Only for direct renames: chained, manual-rewrite, and
+      // redirect entries never moved the folder themselves, so re-applying
+      // them must not move it either.
+      if (!entry.origin || entry.origin === 'rename') {
+        await this.maybeRenameVaultPath(entry.oldPath, entry.newPath);
+      }
       this.settingTab.refreshIfOpen();
       this.markHistoryDirty();
       if (!opts.silent) this.fpuNotice({
@@ -875,9 +904,16 @@ class PathTrackerPlugin extends Plugin {
         if (opts.onConflict) opts.onConflict(entry);
         return;
       }
-      const proceed = window.confirm(
-        `That setting was edited manually since Folder Path Updater wrote it.\n\nCurrent value:\n  ${JSON.stringify(current)}\n\nUndo would replace it with:\n  ${JSON.stringify(entry.oldValue)}\n\nProceed and overwrite the manual edit?`
-      );
+      const proceed = await ConfirmModal.ask(this.app, {
+        title: 'Overwrite manual edit?',
+        body: 'This setting was edited manually since Folder Path Updater wrote it.',
+        lines: [
+          { label: 'Current value', value: String(current) },
+          { label: 'Undo restores', value: String(entry.oldValue) },
+        ],
+        confirmText: 'Overwrite',
+        destructive: true,
+      });
       if (!proceed) return;
     }
     try {
@@ -895,8 +931,13 @@ class PathTrackerPlugin extends Plugin {
         await adapter.write(entry.sourceFile, JSON.stringify(data, null, 2));
       }
       entry.status = 'reverted';
-      // Also rename the folder/file back (once per group; subsequent calls no-op)
-      await this.maybeRenameVaultPath(entry.newPath, entry.oldPath);
+      // Also rename the folder/file back (once per group; subsequent calls
+      // no-op). Only for direct renames: undoing a redirect must not rename
+      // the redirect target, and chained/manual entries never renamed the
+      // folder in the first place.
+      if (!entry.origin || entry.origin === 'rename') {
+        await this.maybeRenameVaultPath(entry.newPath, entry.oldPath);
+      }
       this.settingTab.refreshIfOpen();
       this.markHistoryDirty();
       if (!opts.silent) this.fpuNotice({
@@ -963,9 +1004,14 @@ class PathTrackerPlugin extends Plugin {
       if (entry.scope === 'frontmatter') {
         const file = this.app.vault.getAbstractFileByPath(entry.sourceFile);
         if (!file || !(file instanceof TFile)) return undefined;
-        const cache = this.app.metadataCache.getFileCache(file);
-        if (!cache || !cache.frontmatter) return undefined;
-        let cur = cache.frontmatter;
+        // Read from disk rather than the metadata cache: the cache updates
+        // asynchronously after a write, so an undo right after an apply would
+        // see the stale value and report a false conflict.
+        const raw = await this.app.vault.read(file);
+        const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+        if (!fmMatch) return undefined;
+        let cur;
+        try { cur = parseYaml(fmMatch[1]); } catch (e) { return undefined; }
         for (const k of entry.keyPath) {
           if (cur == null) return undefined;
           cur = cur[k];
@@ -1034,18 +1080,21 @@ class PathTrackerPlugin extends Plugin {
   fpuNotice(opts) {
     const timeout = opts.persistent ? 0 : (opts.timeout != null ? opts.timeout : 16000);
     const n = new Notice('', timeout);
-    n.noticeEl.empty();
-    n.noticeEl.addClass('fpu-notice');
+    // messageEl is the documented container (1.8.7+); noticeEl is its
+    // deprecated alias kept as a fallback for older builds.
+    const root = n.messageEl || n.noticeEl;
+    root.empty();
+    root.addClass('fpu-notice');
 
     // Bold status line (same as the older notices)
-    const status = n.noticeEl.createDiv();
+    const status = root.createDiv();
     status.style.cssText = 'font-weight:600;margin-bottom:2px;';
     status.setText(opts.status || '');
 
     // Path rows in default font, with full paths in the tooltip
     if (opts.paths && opts.paths.length) {
       for (const p of opts.paths) {
-        const row = n.noticeEl.createDiv();
+        const row = root.createDiv();
         const text = row.createSpan({ text: formatPathPair(p.oldPath, p.newPath) });
         text.setAttr('title', `${p.oldPath}\n  →\n${p.newPath}`);
         if (p.count) {
@@ -1057,13 +1106,13 @@ class PathTrackerPlugin extends Plugin {
 
     // Optional plain sub-text (e.g., plugin list when multiple need reload)
     if (opts.subText) {
-      const sub = n.noticeEl.createDiv({ text: opts.subText });
+      const sub = root.createDiv({ text: opts.subText });
       sub.style.cssText = 'opacity:0.85;margin-top:2px;';
     }
 
     // Buttons
     if (opts.buttons && opts.buttons.length) {
-      const btns = n.noticeEl.createDiv();
+      const btns = root.createDiv();
       btns.style.cssText = 'margin-top:8px;display:flex;gap:6px;';
       for (const b of opts.buttons) {
         const btn = btns.createEl('button', { text: b.text });
@@ -1142,7 +1191,7 @@ class PathTrackerPlugin extends Plugin {
   // Manual rewrite: user types an old path and a new path; we scan and queue
   // matching changes exactly as if a rename had fired.
   async runManualRewrite(oldPath, newPath, treatAsFolder) {
-    const fakeBatch = [{ file: { path: newPath }, oldPath, newPath, isFolder: !!treatAsFolder }];
+    const fakeBatch = [{ file: { path: newPath }, oldPath, newPath, isFolder: !!treatAsFolder, manual: true }];
     await this.handleRenameBatch(fakeBatch);
   }
 
@@ -1235,6 +1284,7 @@ class PathTrackerPlugin extends Plugin {
         status: 'pending',
         originalFileContent: null,
         sessionId: this.currentSessionId,
+        origin: 'redirect',
         note: 'redirect after delete',
       });
     }
@@ -1247,6 +1297,26 @@ class PathTrackerPlugin extends Plugin {
       }
       this.markHistoryDirty();
       this.openPendingModal();
+      return;
+    }
+    if (mode === 'notify') {
+      // Notify mode never writes: log the matches as skipped, same as renames.
+      for (const p of proposals) {
+        p.status = 'skipped';
+        p.note = (p.note ? p.note + '; ' : '') + 'notify-only mode';
+        this.session.push(p);
+      }
+      this.settingTab.refreshIfOpen();
+      this.markHistoryDirty();
+      this.fpuNotice({
+        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} found (no action taken)`,
+        paths: [{ oldPath, newPath }],
+        persistent: true,
+        buttons: [{ text: 'View', onClick: () => {
+          this.app.setting.open();
+          this.app.setting.openTabById('folder-path-updater');
+        }}],
+      });
       return;
     }
     const summary = await this.applyProposals(proposals);
@@ -1566,7 +1636,7 @@ class PendingModal extends Modal {
         plugin.pending = plugin.pending.filter((q) => q.id !== p.id);
       }
       this.selected.clear();
-      plugin.updateRibbon();
+      plugin.markHistoryDirty();
       plugin.settingTab.refreshIfOpen();
       this.render();
     };
@@ -1743,7 +1813,7 @@ class PathTrackerSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Notify on every rename')
-      .setDesc('Show a brief notice even when nothing references the renamed folder, so you know the plugin ran. Turn off if it becomes noisy during large reorganizations.')
+      .setDesc('Show a brief notice when you rename a folder that nothing references, so you know the plugin ran. File renames stay quiet unless something references them. Turn off if it gets noisy during large reorganizations.')
       .addToggle((t) => t.setValue(this.plugin.settings.notifyOnNoChanges).onChange(async (v) => { this.plugin.settings.notifyOnNoChanges = v; await this.plugin.saveSettings(); }));
 
     new Setting(containerEl)
@@ -1830,11 +1900,25 @@ class PathTrackerSettingTab extends PluginSettingTab {
     }
     if (this.plugin.session.length > 0) {
       const clear = headBtns.createEl('button', { text: 'Clear history' });
-      clear.title = 'Drops everything except pending entries. Does not change anything on disk.';
-      clear.onclick = () => {
-        this.plugin.session = this.plugin.session.filter((e) => e.status === 'pending');
+      clear.title = 'Removes log entries from the list. Does not change anything on disk.';
+      const doClear = (scope) => {
+        const cur = this.plugin.currentSessionId;
+        this.plugin.session = this.plugin.session.filter((e) => {
+          if (e.status === 'pending') return true;
+          if (scope === 'session') return (e.sessionId || cur) !== cur;
+          return false;
+        });
         this.plugin.markHistoryDirty();
         this.display();
+      };
+      clear.onclick = (ev) => {
+        const cur = this.plugin.currentSessionId;
+        const hasPast = this.plugin.session.some((e) => (e.sessionId || cur) !== cur);
+        if (!hasPast) { doClear('all'); return; }
+        const menu = new Menu();
+        menu.addItem((i) => i.setTitle('Clear this session').onClick(() => doClear('session')));
+        menu.addItem((i) => i.setTitle('Clear everything (including past sessions)').onClick(() => doClear('all')));
+        menu.showAtMouseEvent(ev);
       };
     }
 
@@ -1857,7 +1941,12 @@ class PathTrackerSettingTab extends PluginSettingTab {
       desc.setText(`Undo every change Folder Path Updater has applied this session (${totalApplied}). Each setting goes back to its original value. Use this if something broke and you want to start over.`);
       const btn = dz.createEl('button', { text: `Revert ${totalApplied} change${totalApplied === 1 ? '' : 's'}`, cls: 'path-tracker-danger-btn' });
       btn.onclick = async () => {
-        const ok = window.confirm(`Revert ${totalApplied} change${totalApplied === 1 ? '' : 's'}?`);
+        const ok = await ConfirmModal.ask(this.app, {
+          title: 'Revert everything?',
+          body: `Reverts ${totalApplied} change${totalApplied === 1 ? '' : 's'} from this session. Each setting goes back to its original value.`,
+          confirmText: `Revert ${totalApplied} change${totalApplied === 1 ? '' : 's'}`,
+          destructive: true,
+        });
         if (!ok) return;
         await this.plugin.revertAllSession();
         this.display();
@@ -1974,6 +2063,7 @@ class PathTrackerSettingTab extends PluginSettingTab {
         this.plugin.fpuNotice({
           status: this.plugin.formatRevertStatus('Reverted', ok, fail, skipped),
           paths: [{ oldPath: g.newPath, newPath: g.oldPath, count: total > 1 ? `[${ok}/${total}]` : '' }],
+          persistent: fail > 0 || skipped > 0,
         });
         this.display();
       };
@@ -1995,6 +2085,7 @@ class PathTrackerSettingTab extends PluginSettingTab {
         this.plugin.fpuNotice({
           status: this.plugin.formatRevertStatus('Re-applied', ok, fail, skipped),
           paths: [{ oldPath: g.oldPath, newPath: g.newPath, count: total > 1 ? `[${ok}/${total}]` : '' }],
+          persistent: fail > 0 || skipped > 0,
         });
         this.display();
       };
@@ -2094,6 +2185,49 @@ class ManualRewriteModal extends Modal {
     };
   }
   onClose() { this.contentEl.empty(); }
+}
+
+// ============================================================================
+// Native confirmation modal (replaces window.confirm so dialogs match the
+// rest of Obsidian). Escape or Cancel resolves false.
+// ============================================================================
+class ConfirmModal extends Modal {
+  constructor(app, opts) {
+    super(app);
+    this.opts = opts; // { title, body?, lines?, confirmText?, destructive? }
+    this.resolvePromise = null;
+    this.result = false;
+  }
+  static ask(app, opts) {
+    return new Promise((resolve) => {
+      const m = new ConfirmModal(app, opts);
+      m.resolvePromise = resolve;
+      m.open();
+    });
+  }
+  onOpen() {
+    this.titleEl.setText(this.opts.title);
+    const { contentEl } = this;
+    if (this.opts.body) contentEl.createEl('p', { text: this.opts.body });
+    for (const line of this.opts.lines || []) {
+      const row = contentEl.createDiv({ cls: 'fpu-confirm-line' });
+      row.createSpan({ cls: 'fpu-confirm-line-label', text: line.label });
+      row.createSpan({ cls: 'fpu-confirm-line-value', text: line.value });
+    }
+    const btns = contentEl.createDiv({ cls: 'fpu-confirm-buttons' });
+    const confirm = btns.createEl('button', {
+      text: this.opts.confirmText || 'Confirm',
+      cls: this.opts.destructive ? 'mod-warning' : 'mod-cta',
+    });
+    confirm.onclick = () => { this.result = true; this.close(); };
+    const cancel = btns.createEl('button', { text: 'Cancel' });
+    cancel.onclick = () => this.close();
+    setTimeout(() => confirm.focus(), 0);
+  }
+  onClose() {
+    this.contentEl.empty();
+    if (this.resolvePromise) { this.resolvePromise(this.result); this.resolvePromise = null; }
+  }
 }
 
 // ============================================================================

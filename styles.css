@@ -1,3 +1,28 @@
+/* ========== Notices (spacing only; fonts and sizes stay Obsidian defaults) ========== */
+.fpu-notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-3);
+  padding: var(--size-2-1) 0;
+}
+.fpu-n-status { font-weight: 600; }
+.fpu-n-paths {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-1);
+}
+.fpu-n-path {
+  line-height: 1.4;
+  word-break: break-word;
+}
+.fpu-n-count { opacity: 0.7; }
+.fpu-n-sub { opacity: 0.85; }
+.fpu-n-btns {
+  margin-top: var(--size-2-1);
+  display: flex;
+  gap: var(--size-4-2);
+}
+
 /* ========== Caret (animated triangle) ========== */
 .pt-caret {
   display: inline-block;
@@ -107,7 +132,6 @@
   word-break: break-word;
 }
 .fpu-past-session-path {
-  font-family: var(--font-monospace);
   color: var(--text-normal);
 }
 .fpu-past-session-meta {
@@ -145,7 +169,6 @@ button.fpu-goto-btn:hover {
   margin-bottom: 8px;
 }
 .fpu-redirect-modal .fpu-redirect-deleted {
-  font-family: var(--font-monospace);
   font-size: 0.92em;
   padding: 8px 10px;
   border-radius: 4px;
@@ -159,7 +182,6 @@ button.fpu-goto-btn:hover {
 }
 .fpu-redirect-modal .fpu-redirect-input {
   padding: 8px 10px;
-  font-family: var(--font-monospace);
   font-size: 0.92em;
 }
 .fpu-redirect-modal .fpu-redirect-preview {
@@ -196,8 +218,7 @@ button.fpu-goto-btn:hover {
   flex-shrink: 0;
 }
 .fpu-confirm-line-value {
-  font-family: var(--font-monospace);
-  word-break: break-all;
+  word-break: break-word;
 }
 .fpu-confirm-buttons {
   margin-top: 16px;
@@ -232,8 +253,7 @@ button.fpu-goto-btn:hover {
 .path-tracker-summary-line {
   font-weight: 600;
   font-size: 1em;
-  font-family: var(--font-monospace);
-  word-break: break-all;
+  word-break: break-word;
 }
 .path-tracker-summary-sub {
   margin-top: 4px;
@@ -322,15 +342,10 @@ button.fpu-goto-btn:hover {
   color: var(--text-muted);
   font-weight: 500;
 }
-.path-tracker-line .path-tracker-line-btn {
-  font-size: 0.72em;
-  padding: 2px 10px;
-  margin-left: auto;
-}
+.path-tracker-line-top .fpu-goto-btn { margin-left: auto; }
 .path-tracker-line-diff {
-  font-family: var(--font-monospace);
-  font-size: 0.82em;
-  word-break: break-all;
+  font-size: 0.88em;
+  word-break: break-word;
   padding-left: 0;
 }
 .path-tracker-line-diff .pt-d-eq  { color: var(--text-normal); }
@@ -367,33 +382,13 @@ button.fpu-goto-btn:hover {
 .path-tracker-history-summary:hover { background: var(--background-modifier-hover); }
 .path-tracker-history-title { min-width: 0; }
 .path-tracker-history-rename {
-  font-family: var(--font-monospace);
-  font-size: 0.9em;
+  font-size: 0.95em;
   font-weight: 600;
-  word-break: break-all;
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.path-tracker-history-ts {
-  font-family: var(--font-interface);
-  font-size: 0.72em;
-  font-weight: 400;
-  color: var(--text-muted);
-}
-.path-tracker-line-ts {
-  font-size: 0.72em;
-  color: var(--text-muted);
+  word-break: break-word;
 }
 .path-tracker-history-status {
-  margin-top: 6px;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.path-tracker-history-tail {
-  font-size: 0.78em;
+  margin-top: var(--size-2-1);
+  font-size: 0.85em;
   color: var(--text-muted);
 }
 .path-tracker-history-actions { display: flex; gap: 6px; }
@@ -522,17 +517,3 @@ button.fpu-reload-btn {
   color: var(--text-muted);
 }
 
-/* Legacy status badge (used by some older code paths) */
-.path-tracker-status {
-  display: inline-block;
-  font-size: 0.62em;
-  padding: 1px 6px;
-  border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.path-tracker-status.applied  { background: var(--color-green);  color: #ffffff; }
-.path-tracker-status.pending  { background: var(--color-orange); color: #111111; }
-.path-tracker-status.skipped  { background: var(--background-modifier-border); color: var(--text-normal); }
-.path-tracker-status.reverted { background: var(--color-blue);   color: #ffffff; }
-.path-tracker-status.failed   { background: var(--color-red);    color: #ffffff; }

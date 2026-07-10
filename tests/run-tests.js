@@ -49,6 +49,7 @@ for (const p of [
   'function singularize',
   'function humanizeKeyPath',
   'function tabIdForEntry',
+  'function statusSentence',
 ]) {
   let code = extractBlock(p);
   if (p.startsWith('const')) code += ';';
@@ -151,6 +152,15 @@ eq('singularize ies', ctx.singularize('Categories'), 'Category');
 eq('singularize plain s', ctx.singularize('Notes'), 'Note');
 eq('no singularize ss', ctx.singularize('Address'), 'Address');
 eq('singularize ses', ctx.singularize('Statuses'), 'Status');
+
+// ============================== statusSentence ==============================
+const zero = { applied: 0, skipped: 0, reverted: 0, failed: 0, pending: 0, superseded: 0 };
+eq('all applied', ctx.statusSentence({ ...zero, applied: 3 }), '3 settings updated');
+eq('single applied', ctx.statusSentence({ ...zero, applied: 1 }), '1 setting updated');
+eq('mixed applied + skipped', ctx.statusSentence({ ...zero, applied: 2, skipped: 1 }), '2 settings updated, 1 skipped');
+eq('pending only', ctx.statusSentence({ ...zero, pending: 4 }), '4 waiting for review');
+eq('superseded', ctx.statusSentence({ ...zero, superseded: 2 }), 'replaced by a later rename');
+eq('empty counts', ctx.statusSentence(zero), 'no changes');
 
 // ============================== tabIdForEntry ==============================
 eq('plugin scope -> plugin id', ctx.tabIdForEntry({ scope: 'plugin:calendar', sourceFile: 'x/data.json' }), 'calendar');

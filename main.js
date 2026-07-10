@@ -1086,34 +1086,26 @@ class PathTrackerPlugin extends Plugin {
     root.empty();
     root.addClass('fpu-notice');
 
-    // Bold status line (same as the older notices)
-    const status = root.createDiv();
-    status.style.cssText = 'font-weight:600;margin-bottom:2px;';
-    status.setText(opts.status || '');
+    // Bold status line (default font and size; only the weight differs)
+    root.createDiv({ cls: 'fpu-n-status', text: opts.status || '' });
 
     // Path rows in default font, with full paths in the tooltip
     if (opts.paths && opts.paths.length) {
+      const pathsEl = root.createDiv({ cls: 'fpu-n-paths' });
       for (const p of opts.paths) {
-        const row = root.createDiv();
+        const row = pathsEl.createDiv({ cls: 'fpu-n-path' });
         const text = row.createSpan({ text: formatPathPair(p.oldPath, p.newPath) });
         text.setAttr('title', `${p.oldPath}\n  →\n${p.newPath}`);
-        if (p.count) {
-          const c = row.createSpan({ text: ' ' + p.count });
-          c.style.cssText = 'opacity:0.7;';
-        }
+        if (p.count) row.createSpan({ cls: 'fpu-n-count', text: ' ' + p.count });
       }
     }
 
     // Optional plain sub-text (e.g., plugin list when multiple need reload)
-    if (opts.subText) {
-      const sub = root.createDiv({ text: opts.subText });
-      sub.style.cssText = 'opacity:0.85;margin-top:2px;';
-    }
+    if (opts.subText) root.createDiv({ cls: 'fpu-n-sub', text: opts.subText });
 
     // Buttons
     if (opts.buttons && opts.buttons.length) {
-      const btns = root.createDiv();
-      btns.style.cssText = 'margin-top:8px;display:flex;gap:6px;';
+      const btns = root.createDiv({ cls: 'fpu-n-btns' });
       for (const b of opts.buttons) {
         const btn = btns.createEl('button', { text: b.text });
         if (b.cta) btn.classList.add('mod-cta');
@@ -1744,18 +1736,16 @@ function plainEnglishSummary(entries) {
   return `${titles.slice(0, 2).join(', ')} and ${entries.length - 2} more`;
 }
 
-// Used by the settings-tab history expansion (no checkboxes, no per-row buttons —
-// the group card on top carries Undo)
-function renderEntryRow(parent, entry, plugin) {
-  const row = parent.createDiv({ cls: 'path-tracker-line' });
-  row.createDiv({ cls: 'path-tracker-line-what', text: `${entryTitle(entry)}  ·  ${plugin.friendlyLabel(entry)}` });
-  const diff = row.createDiv({ cls: 'path-tracker-line-diff' });
-  diff.title = `${entry.oldValue}\n→\n${entry.newValue}`;
-  renderInlineDiff(diff, entry.oldValue, entry.newValue);
-  if (entry.status && entry.status !== 'pending') {
-    const tag = row.createSpan({ cls: `path-tracker-status ${entry.status}`, text: entry.status });
-    tag.style.marginLeft = '6px';
-  }
+// One plain-language line for a history card, e.g. "3 settings updated, 1 skipped"
+function statusSentence(counts) {
+  const parts = [];
+  if (counts.applied) parts.push(`${counts.applied} setting${counts.applied === 1 ? '' : 's'} updated`);
+  if (counts.pending) parts.push(`${counts.pending} waiting for review`);
+  if (counts.reverted) parts.push(`${counts.reverted} reverted`);
+  if (counts.skipped) parts.push(`${counts.skipped} skipped`);
+  if (counts.superseded) parts.push('replaced by a later rename');
+  if (counts.failed) parts.push(`${counts.failed} failed`);
+  return parts.length ? parts.join(', ') : 'no changes';
 }
 
 // ============================================================================
@@ -2030,19 +2020,10 @@ class PathTrackerSettingTab extends PluginSettingTab {
     const line1 = title.createDiv({ cls: 'path-tracker-history-rename' });
     const renameSpan = line1.createSpan({ text: formatPathPair(g.oldPath, g.newPath) });
     renameSpan.setAttr('title', `${g.oldPath}\n  →\n${g.newPath}`);
-    const ts = line1.createSpan({ cls: 'path-tracker-history-ts', text: formatRelativeTime(g.latestTs) });
-    ts.title = new Date(g.latestTs).toLocaleString();
+    // One plain-language status line instead of a row of pills
     const line2 = title.createDiv({ cls: 'path-tracker-history-status' });
-    // Status pills for each non-zero status
-    const order = ['applied', 'reverted', 'pending', 'skipped', 'superseded', 'failed'];
-    let any = false;
-    for (const k of order) {
-      if (g.counts[k]) { appendStatusPill(line2, k, g.counts[k]); any = true; }
-    }
-    if (!any) line2.setText('no changes');
-    const targets = new Set(g.entries.map((e) => e.sourceFile)).size;
-    const tail = line2.createSpan({ cls: 'path-tracker-history-tail' });
-    tail.setText(`  across ${targets} place${targets === 1 ? '' : 's'}`);
+    line2.setText(`${statusSentence(g.counts)} · ${formatRelativeTime(g.latestTs)}`);
+    line2.title = new Date(g.latestTs).toLocaleString();
 
     // Right-side action: Undo if applied exists, Re-apply if reverted exists
     const actions = sum.createDiv({ cls: 'path-tracker-history-actions' });
@@ -2109,6 +2090,11 @@ class PathTrackerSettingTab extends PluginSettingTab {
 
     if (expanded) {
       const body = card.createDiv({ cls: 'path-tracker-history-body' });
+      // The card-level Undo / Re-apply / Apply buttons do the work; rows just
+      // show what changed. A pill appears only when a row's status differs
+      // from the rest of the card, so the common case stays quiet.
+      const statusCounts = Object.entries(g.counts).sort((a, b) => b[1] - a[1]);
+      const dominant = statusCounts.length ? statusCounts[0][0] : null;
       // Group by source for nicer reading
       const bySource = new Map();
       for (const e of g.entries) {
@@ -2125,23 +2111,8 @@ class PathTrackerSettingTab extends PluginSettingTab {
           const line = block.createDiv({ cls: 'path-tracker-line' });
           const top = line.createDiv({ cls: 'path-tracker-line-top' });
           top.createSpan({ cls: 'path-tracker-line-what', text: entryTitle(e) });
-          if (e.status && e.status !== 'pending') {
+          if (e.status && e.status !== dominant) {
             appendStatusPill(top, e.status);
-          }
-          if (e.ts) {
-            const ts = top.createSpan({ cls: 'path-tracker-line-ts', text: formatRelativeTime(e.ts) });
-            ts.title = new Date(e.ts).toLocaleString();
-          }
-          // Per-row Undo / Re-apply / Apply (for skipped)
-          if (e.status === 'applied') {
-            const u = top.createEl('button', { cls: 'path-tracker-line-btn', text: 'Undo' });
-            u.onclick = async () => { await this.plugin.undoEntry(e); this.display(); };
-          } else if (e.status === 'reverted') {
-            const r = top.createEl('button', { cls: 'path-tracker-line-btn', text: 'Re-apply' });
-            r.onclick = async () => { await this.plugin.reapplyEntry(e); this.display(); };
-          } else if (e.status === 'skipped') {
-            const a = top.createEl('button', { cls: 'path-tracker-line-btn', text: 'Apply' });
-            a.onclick = async () => { await this.plugin.applyProposals([e]); this.display(); };
           }
           // Small "open in settings" arrow
           const goto = top.createEl('button', { cls: 'fpu-goto-btn', text: '↗' });

@@ -10,6 +10,7 @@ Items marked **(machine checked)** are already covered by automated tests (`node
 
 ## 1. Notice format
 - [ ] Rename any folder with references. The notice has a bold status line on top, the rename (basenames) below, no X button, default Obsidian font.
+- [ ] Spacing feels comfortable: clear gaps between the status line, the paths, and the buttons. Nothing cramped.
 - [ ] Hover the path line. Full paths show in a tooltip.
 - [ ] Click the notice body. It dismisses (default Obsidian behavior).
 
@@ -94,10 +95,12 @@ Your `daily-notes.json` stores the template without `.md` (e.g. `System/Template
 ---
 
 ## 10. History
-- [ ] Each rename is a card, headline shows basenames (hover for full paths). Expand for per-row Undo / Re-apply / Apply.
+- [ ] Each rename is a card: name on top, one plain sentence under it like `3 settings updated · 2m ago`. No pill row, no monospace. (New look.)
+- [ ] Expand a card: rows show the setting name and a red/green diff in the normal font. The card's single Undo / Re-apply button does the work (per-row buttons are gone).
+- [ ] A pill only appears on a row when its result differs from the rest (e.g. one skipped among applied).
 - [ ] Click **↗** on a row. The right settings tab opens and the field briefly highlights. Also try it on a Bookmarks entry and tell me what happens (Bookmarks has no settings tab; I could not verify this from code).
 - [ ] Click **↗** on a frontmatter row. The note opens.
-- [ ] **Clear history** now asks: this session, or everything including past sessions. (New.)
+- [ ] **Clear history** asks: this session, or everything including past sessions.
 
 > Feedback:
 

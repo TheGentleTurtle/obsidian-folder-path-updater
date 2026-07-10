@@ -14,10 +14,11 @@ When you rename or move your daily notes folder, Obsidian updates `[[wikilinks]]
 - Scans Obsidian's core feature settings and every community plugin's `data.json` for references to the old path.
 - Rewrites those references to point at the new path: either silently, with a notification, or only with your approval.
 - Catches **chained renames**: if you skip an `A → B` proposal then rename `B → C`, the plugin notices that settings still say `A` and rewrites them to `C`.
-- Detects **deletions**: when you delete a folder/file that something still references, you get a notice with a **Redirect** button — pick a new target path and the orphan references are rewritten in one go.
+- Detects **deletions**: when you delete a folder/file that something still references, you get a notice with a **Redirect** button. Pick a new target path and the orphan references are rewritten, following your chosen mode.
+- Handles **extensionless references**: core plugins like Daily Notes store template paths without `.md` (e.g. `template: "Templates/Daily"`), and renaming `Templates/Daily.md` updates those too.
 - Optionally scans note **frontmatter properties** for path values (opt-in, with a per-property allowlist).
-- Keeps a persistent **history** of every rename across sessions: the current session is front and centre with one-click Undo per group; previous sessions sit below in a read-only collapsible view.
-- **Undo is full reversal** — clicking Undo rolls the settings back *and* renames the folder/file back to its original name in one click. Same for Re-apply.
+- Keeps a persistent **history** of every rename across sessions: the current session is front and center with one-click Undo per group; previous sessions sit below in a read-only collapsible view.
+- **Undo is full reversal**: clicking Undo rolls the settings back *and* renames the folder/file back to its original name in one click. Same for Re-apply. (Redirects, chained renames, and manual rewrites only restore the settings values; they never move your folders.)
 
 ## Modes
 
@@ -31,13 +32,13 @@ Set in the plugin's settings page:
   <img src="assets/settings.png" alt="Folder Path Updater settings: mode dropdown, Ignore paths textarea, History with one Undo entry, and a red Revert everything danger zone" width="820" style="border-radius: 24px;">
 </p>
 
-The settings tab houses: the mode dropdown, an auto-reload toggle, a "Notify on every rename" toggle, an opt-in frontmatter scan with its own allowlist, a backup-retention dropdown, and a glob-aware ignore list (`*` for one segment, `**` for any depth). Below the settings is the **History** of every rename — current session up top with per-group Undo / Re-apply, previous sessions below as read-only collapsible cards, and a red **Revert everything** danger button for rolling the whole session back in one shot.
+The settings tab houses: the mode dropdown, an auto-reload toggle, a "Notify on every rename" toggle, an opt-in frontmatter scan with its own allowlist, a backup-retention dropdown, and a glob-aware ignore list (`*` for one segment, `**` for any depth). Below the settings is the **History** of every rename: current session up top with per-group Undo / Re-apply, previous sessions below as read-only collapsible cards, and a red **Revert everything** danger button for rolling the whole session back in one shot.
 
 > **Reload affected community plugins** (on by default) makes the plugin disable then re-enable any community plugin whose `data.json` was just edited, so the new path takes effect without restarting Obsidian. Turn it off if you'd rather restart Obsidian yourself.
 
 ## Safety
 
-The matcher is careful by design — it only changes a value when it's clearly a real path:
+The matcher is careful by design. It only changes a value when it's clearly a real path:
 
 - **Folder prefix matches:** (e.g. `Daily Notes/2026/foo.md` → `Daily/2026/foo.md`) always safe.
 - **Exact value matches:** only when the field name looks like a path field (`folder`, `path`, `template`, `dir`, etc.) **or** the value has a slash.
@@ -74,4 +75,4 @@ Add `TheGentleTurtle/obsidian-folder-path-updater` in [BRAT](https://github.com/
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT (see [LICENSE](LICENSE)).

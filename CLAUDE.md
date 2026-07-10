@@ -18,7 +18,7 @@ Folder Path Updater, an Obsidian community plugin. It watches vault rename/move/
 
 1. **Verify Obsidian APIs against the real docs before relying on them.** Local clone: `/Users/milolipman/Downloads/obsidian-developer-docs-main/en/Reference/TypeScript API/`. If unreachable, say so and stop; never work from memory.
 2. **No Claude attribution.** No `Co-Authored-By` trailers, no Claude in contributors. Commit as `TheGentleTurtle <153253062+TheGentleTurtle@users.noreply.github.com>`.
-3. **Never cut a GitHub release unless explicitly asked.** Normal flow: commit → push to `main` → copy `main.js` + `styles.css` to `/Users/milolipman/Downloads/Milo's Vault/.obsidian/plugins/folder-path-updater/` so the owner can test.
+3. **Always release after changes** (owner's standing instruction, 2026-07: "release always release"). Flow: bump `manifest.json` + `versions.json` → commit `vX.Y.Z` → push to `main` → `gh release create X.Y.Z main.js manifest.json styles.css` (three assets, never a zip) → confirm the attestation workflow succeeds → copy `main.js`, `styles.css`, `manifest.json` to `/Users/milolipman/Downloads/Milo's Vault/.obsidian/plugins/folder-path-updater/`.
 4. **No em-dashes in notification text** (use parentheses). For other copy, ask first.
 5. **Removed features stay removed:** ribbon icon, `workspace.json`/generic `.obsidian` config scanning, confidence ratings, the custom `×` close button on notices, custom notice fonts.
 6. **Ask taste questions as a short numbered list** with a marked recommendation; do not decide taste unilaterally to "finish."

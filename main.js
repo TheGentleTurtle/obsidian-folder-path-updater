@@ -116,15 +116,18 @@ function findSettingItemByLabel(root, label) {
 
 // Render a rename pair as basenames only when both share the same parent directory,
 // otherwise show the full paths. Caller is responsible for adding a title= tooltip.
-function formatPathPair(oldPath, newPath) {
+// Pass quoted=true for the notice headline style: "Daily Notes" → "Daily".
+function formatPathPair(oldPath, newPath, quoted) {
   const oldParts = String(oldPath || '').split('/');
   const newParts = String(newPath || '').split('/');
   const oldBase = oldParts[oldParts.length - 1] || oldPath;
   const newBase = newParts[newParts.length - 1] || newPath;
   const oldDir = oldParts.slice(0, -1).join('/');
   const newDir = newParts.slice(0, -1).join('/');
-  if (oldDir === newDir) return `${oldBase} → ${newBase}`;
-  return `${oldPath} → ${newPath}`;
+  const from = oldDir === newDir ? oldBase : oldPath;
+  const to = oldDir === newDir ? newBase : newPath;
+  if (quoted) return `"${from}" → "${to}"`;
+  return `${from} → ${to}`;
 }
 
 class PathTrackerPlugin extends Plugin {
@@ -427,7 +430,7 @@ class PathTrackerPlugin extends Plugin {
     if (proposals.length === 0) {
       if (autoCancelled > 0) {
         this.fpuNotice({
-          status: 'Already in sync (no action needed)',
+          status: 'Already in sync (no action needed).',
           paths: batch.map((b) => ({ oldPath: b.oldPath, newPath: b.newPath })),
           timeout: 16000,
         });
@@ -440,7 +443,7 @@ class PathTrackerPlugin extends Plugin {
         const notable = batch.filter((b) => b.isFolder || b.manual);
         if (notable.length) {
           this.fpuNotice({
-            status: '0 references to update',
+            status: '0 references to update.',
             paths: notable.map((b) => ({ oldPath: b.oldPath, newPath: b.newPath })),
             timeout: 10000,
           });
@@ -472,7 +475,7 @@ class PathTrackerPlugin extends Plugin {
       }
       this.settingTab.refreshIfOpen();
       this.fpuNotice({
-        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} found (no action taken)`,
+        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} found (no action taken).`,
         paths,
         persistent: true,
         buttons: [{ text: 'View', onClick: openHistoryView }],
@@ -485,7 +488,7 @@ class PathTrackerPlugin extends Plugin {
 
       const places = new Set(proposals.map((p) => this.friendlyLabel(p))).size;
       this.fpuNotice({
-        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} in ${places} setting${places === 1 ? '' : 's'}`,
+        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} across ${places} setting${places === 1 ? '' : 's'}.`,
         paths,
         persistent: true,
         buttons: [
@@ -773,15 +776,15 @@ class PathTrackerPlugin extends Plugin {
     this.settingTab.refreshIfOpen();
   }
 
-  // Build "Reverted 3" or "Reverted 3 of 5 (2 failed, 1 skipped)" header text.
+  // Build "Reverted 3." or "Reverted 3 of 5 (2 failed, 1 skipped)." sub text.
   formatRevertStatus(verb, ok, fail, skipped) {
     skipped = skipped || 0;
     fail = fail || 0;
-    if (fail === 0 && skipped === 0) return `${verb} ${ok}`;
+    if (fail === 0 && skipped === 0) return `${verb} ${ok}.`;
     const tail = [];
     if (fail) tail.push(`${fail} failed`);
     if (skipped) tail.push(`${skipped} skipped (manually edited)`);
-    return `${verb} ${ok} of ${ok + fail + skipped} (${tail.join(', ')})`;
+    return `${verb} ${ok} of ${ok + fail + skipped} (${tail.join(', ')}).`;
   }
 
   // Group entries by (oldPath, newPath) into path rows with [ok/total] counts.
@@ -1037,12 +1040,11 @@ class PathTrackerPlugin extends Plugin {
     if (needsReload) {
       const plugins = Array.from(summary.pluginsNeedingReload);
       status = plugins.length === 1
-        ? `${plugins[0]} still uses the old path`
-        : `${plugins.length} plugins still use old paths`;
+        ? `${plugins[0]} still uses the old path until you reload.`
+        : `${plugins.length} plugins still use old paths until you reload.`;
       if (plugins.length > 1) subText = plugins.join(', ');
     } else {
-      status = `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}`;
-      if (summary.failed) status += ` (${summary.failed} failed)`;
+      status = `Updated in ${summary.applied} place${summary.applied === 1 ? '' : 's'}${summary.failed ? ` (${summary.failed} failed)` : ''}.`;
     }
     const buttons = [{
       text: 'View',
@@ -1070,10 +1072,14 @@ class PathTrackerPlugin extends Plugin {
   }
 
   // ---------------------------------------------------------------------------
-  // Notice helper (minimal styling — bold status line, default font everywhere).
-  // opts: { status, paths?, subText?, buttons?, persistent?, timeout? }
-  // - paths: array of { oldPath, newPath, count? } rendered as basename pairs
-  //   with full paths in the tooltip; same parent dir collapses to basenames.
+  // Notice helper (default font everywhere; layout matches the README shot:
+  // bold rename pair on top, plain status sentence below).
+  // opts: { status, paths?, title?, subText?, buttons?, persistent?, timeout? }
+  // - paths: array of { oldPath, newPath, count? } — rendered BOLD on top as
+  //   quoted pairs ("Daily Notes" → "Daily"), basenames when the parent dir is
+  //   unchanged, full paths in the tooltip. The status then renders below.
+  // - title: bold top line for path-less notices (e.g. deletes); status below.
+  // - Neither paths nor title: the status itself renders bold (single-liners).
   // - persistent: timeout = 0 (stays until a button is clicked or the notice
   //   body is clicked, which is Obsidian's default dismiss behavior).
   // ---------------------------------------------------------------------------
@@ -1086,18 +1092,21 @@ class PathTrackerPlugin extends Plugin {
     root.empty();
     root.addClass('fpu-notice');
 
-    // Bold status line (default font and size; only the weight differs)
-    root.createDiv({ cls: 'fpu-n-status', text: opts.status || '' });
-
-    // Path rows in default font, with full paths in the tooltip
+    // Bold headline: the rename pair(s), or the given title, or the status.
     if (opts.paths && opts.paths.length) {
-      const pathsEl = root.createDiv({ cls: 'fpu-n-paths' });
+      const pathsEl = root.createDiv({ cls: 'fpu-n-title' });
       for (const p of opts.paths) {
         const row = pathsEl.createDiv({ cls: 'fpu-n-path' });
-        const text = row.createSpan({ text: formatPathPair(p.oldPath, p.newPath) });
+        const text = row.createSpan({ text: formatPathPair(p.oldPath, p.newPath, true) });
         text.setAttr('title', `${p.oldPath}\n  →\n${p.newPath}`);
         if (p.count) row.createSpan({ cls: 'fpu-n-count', text: ' ' + p.count });
       }
+      if (opts.status) root.createDiv({ cls: 'fpu-n-sub', text: opts.status });
+    } else if (opts.title) {
+      root.createDiv({ cls: 'fpu-n-title', text: opts.title });
+      if (opts.status) root.createDiv({ cls: 'fpu-n-sub', text: opts.status });
+    } else {
+      root.createDiv({ cls: 'fpu-n-title', text: opts.status || '' });
     }
 
     // Optional plain sub-text (e.g., plugin list when multiple need reload)
@@ -1199,10 +1208,9 @@ class PathTrackerPlugin extends Plugin {
     const isFolder = file instanceof TFolder;
     const refs = await this.findReferencesToPath(deletedPath, isFolder);
     if (refs.length === 0) return; // silent
-    const baseName = deletedPath.split('/').pop();
     this.fpuNotice({
-      status: `${refs.length} reference${refs.length === 1 ? '' : 's'} still point${refs.length === 1 ? 's' : ''} to "${baseName}"`,
-      subText: deletedPath,
+      title: `"${deletedPath}" deleted`,
+      status: `${refs.length} reference${refs.length === 1 ? '' : 's'} still point${refs.length === 1 ? 's' : ''} to this ${isFolder ? 'folder' : 'file'}.`,
       persistent: true,
       buttons: [{
         text: 'Redirect',
@@ -1301,7 +1309,7 @@ class PathTrackerPlugin extends Plugin {
       this.settingTab.refreshIfOpen();
       this.markHistoryDirty();
       this.fpuNotice({
-        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} found (no action taken)`,
+        status: `${proposals.length} reference${proposals.length === 1 ? '' : 's'} found (no action taken).`,
         paths: [{ oldPath, newPath }],
         persistent: true,
         buttons: [{ text: 'View', onClick: () => {

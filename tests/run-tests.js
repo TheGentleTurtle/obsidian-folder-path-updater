@@ -133,6 +133,8 @@ eq('same parent collapses to basenames', ctx.formatPathPair('A/B/Daily', 'A/B/Da
 eq('different parent keeps full paths', ctx.formatPathPair('A/Daily', 'B/Daily'), 'A/Daily → B/Daily');
 eq('root rename', ctx.formatPathPair('Daily', 'Daily Notes'), 'Daily → Daily Notes');
 eq('move shows full paths', ctx.formatPathPair('Daily', 'Archive/Daily'), 'Daily → Archive/Daily');
+eq('quoted headline style', ctx.formatPathPair('Daily Notes', 'Daily', true), '"Daily Notes" → "Daily"');
+eq('quoted move keeps full paths', ctx.formatPathPair('Daily', 'Archive/Daily', true), '"Daily" → "Archive/Daily"');
 
 // ============================== humanizeKeyPath ==============================
 const h = (kp, srcFile) => ctx.humanizeKeyPath(kp, srcFile);

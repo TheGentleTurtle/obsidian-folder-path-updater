@@ -1,12 +1,4 @@
-/* ========== Notices (spacing only; fonts and sizes stay Obsidian defaults) ========== */
-/* Widen the notice so titles have room and wrap instead of truncating.
-   Covers both DOM shapes: older builds where our class IS the .notice element,
-   and 1.8.7+ where our class sits on the inner message container. */
-.notice.fpu-notice,
-.notice:has(.fpu-notice) {
-  width: 480px;
-  max-width: calc(100vw - 48px);
-}
+/* ========== Notices (spacing only; width, fonts and sizes stay Obsidian defaults) ========== */
 .fpu-notice {
   display: flex;
   flex-direction: column;

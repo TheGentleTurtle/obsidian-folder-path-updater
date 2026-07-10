@@ -10,7 +10,7 @@ Items marked **(machine checked)** are already covered by automated tests (`node
 
 ## 1. Notice format
 - [ ] Rename any folder with references. The notice has the **bold quoted rename on top** (`"Daily Notes" → "Daily"`), the plain status sentence below (`4 references across 2 settings.`), no X button, default Obsidian font.
-- [ ] The notice is wide (~480px) and long names wrap instead of truncating.
+- [ ] The notice is Obsidian's normal width and long names wrap onto the next line instead of truncating.
 - [ ] Spacing feels comfortable: clear gaps between the rename, the status, and the buttons. Nothing cramped.
 - [ ] Hover the rename line. Full paths show in a tooltip.
 - [ ] Click the notice body. It dismisses (default Obsidian behavior).

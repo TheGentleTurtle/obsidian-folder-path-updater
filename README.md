@@ -73,6 +73,18 @@ Install from **Settings → Community plugins → Browse** and search for *Folde
 
 Add `TheGentleTurtle/obsidian-folder-path-updater` in [BRAT](https://github.com/TfTHacker/obsidian42-brat).
 
+## Development
+
+No build step: `main.js`, `styles.css`, and `manifest.json` are the plugin. To work on it, copy those files into `<vault>/.obsidian/plugins/folder-path-updater/` and reload Obsidian.
+
+Unit tests cover the pure logic (path matcher, glob patterns, label humanizer):
+
+```
+node tests/run-tests.js
+```
+
+`TEST.md` is the manual click-through plan for everything that needs a live Obsidian.
+
 ## License
 
 MIT (see [LICENSE](LICENSE)).
